@@ -9,22 +9,33 @@ from typing import Dict
 class FourierImageAnalyzer:
     def __init__(
         self,
-        image_path: str,
         known_pattern_period: float,
         analize_band_width: int,
         is_horizontal: bool,
     ) -> None:
-        self.image_path = image_path
         self.known_period = known_pattern_period
         self.analize_band_width = analize_band_width
         self.is_horizontal = is_horizontal
         return
 
-    def analyze_periodic_pattern(self, visualize_matplotlib: bool = False) -> Dict:
+    def analyze_periodic_pattern(
+        self, image=None, image_path: str = None, visualize_matplotlib: bool = False
+    ) -> Dict:
 
-        # Load image (convert to grayscale if needed)
-        img = Image.open(self.image_path).convert("L")
-        img_array = np.array(img, dtype=float)
+        if image is None and image_path is None:
+            raise Exception("Did not provide image nor image_path")
+        if image is not None and image_path is not None:
+            raise Exception("Either image nor image_path should be provided")
+        
+        if image is not None:
+            # Load image (convert to grayscale if needed)
+            img = image.convert("L")
+            img_array = np.array(img, dtype=float)
+        
+        if image_path is not None:
+            # Load image (convert to grayscale if needed)
+            img = Image.open(image_path).convert("L")
+            img_array = np.array(img, dtype=float)
 
         # Get image dimensions
         height, width = img_array.shape
@@ -152,12 +163,11 @@ def main_single_run():
     band_width = 10
 
     analyzer = FourierImageAnalyzer(
-        image_path=image_path,
         known_pattern_period=known_pattern_period,
         analize_band_width=band_width,
         is_horizontal=True,
     )
-    analyzer.analyze_periodic_pattern(visualize_matplotlib=True)
+    analyzer.analyze_periodic_pattern(image_path=image_path, visualize_matplotlib=True)
 
     print(
         "Pixels to mm coefficient = ",
@@ -184,12 +194,11 @@ def main_multiple_run():
 
         try:
             analyzer = FourierImageAnalyzer(
-                image_path=image_path,
                 known_pattern_period=known_pattern_period,
                 analize_band_width=band_width,
                 is_horizontal=True,
             )
-            analyzer.analyze_periodic_pattern(visualize_matplotlib=False)
+            analyzer.analyze_periodic_pattern(image_path=image_path, visualize_matplotlib=False)
 
             periods.append(analyzer.spatial_period_pixels)
             phase_shifts.append(analyzer.phase_shift_mm)
