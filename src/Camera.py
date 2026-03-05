@@ -57,3 +57,28 @@ class Camera:
                 return filename
             counter += 1
         return
+
+
+if __name__ == "__main__":
+    # Initialize the camera (0 is usually the default built-in camera)
+    cam = Camera(index=3, width=100, height=100)
+    cam.create_capture()
+
+    while True:
+        # Capture frame-by-frame
+        ret, frame = cam.capture.read()
+
+        # If frame is read correctly, ret is True
+        if not ret:
+            print("Can't receive frame. Exiting ...")
+            break
+
+        # Display the resulting frame
+        cv2.imshow("Webcam Feed", frame)
+
+        # Press 'q' to quit the window
+        if cv2.waitKey(1) == ord("q"):
+            break
+
+    # When everything is done, release the capture and destroy windows
+    cam.close()
