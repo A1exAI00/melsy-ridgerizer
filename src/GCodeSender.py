@@ -89,50 +89,76 @@ class GCodeSenter:
             self._log("Connection closed", level=2)
         return
 
-    def moveto(
+    def go_to(
         self,
-        X: float = None,
-        Y: float = None,
-        Z: float = None,
+        x: float = None,
+        y: float = None,
+        z: float = None,
         need_to_await=True,
         speed: float = 3000,
     ) -> None:
-        if X is not None and not (self.config.x_min <= X <= self.config.x_max):
+        if x is not None and not (self.config.x_min <= x <= self.config.x_max):
             raise ValueError(
-                f"X={X} out of borders [{self.config.x_min}, {self.config.x_max}]"
+                f"X={x} out of borders [{self.config.x_min}, {self.config.x_max}]"
             )
-        if Y is not None and not (self.config.y_min <= Y <= self.config.y_max):
+        if y is not None and not (self.config.y_min <= y <= self.config.y_max):
             raise ValueError(
-                f"Y={Y} out of borders [{self.config.y_min}, {self.config.y_max}]"
+                f"Y={y} out of borders [{self.config.y_min}, {self.config.y_max}]"
             )
-        if Z is not None and not (self.config.z_min <= Z <= self.config.z_max):
+        if z is not None and not (self.config.z_min <= z <= self.config.z_max):
             raise ValueError(
-                f"Z={Z} out of borders [{self.config.z_min}, {self.config.z_max}]"
+                f"Z={z} out of borders [{self.config.z_min}, {self.config.z_max}]"
             )
 
-        gcode = "G1"
-        if X is not None:
-            gcode += f" X{X}"
-        if Y is not None:
-            gcode += f" Y{Y}"
-        if Z is not None:
-            gcode += f" Z{Z}"
+        gcode = "G01"
+        if x is not None:
+            gcode += f" X{x}"
+        if y is not None:
+            gcode += f" Y{y}"
+        if z is not None:
+            gcode += f" Z{z}"
         gcode += f" F{speed}"
 
+        self.send_command(SomeGCodes.SET_ABSOLUTE_POSITIONING_GCODE, need_to_await)
         self.send_command(gcode, need_to_await)
-        self._log(f"Go to: X={X}, Y={Y}, Z={Z}", level=2)
+        self._log(f"Go to: X={x}, Y={y}, Z={z}", level=2)
         return
+    
+    def move_by(self, x: float = None, y: float = None, z: float = None, need_to_await=True, speed=3000):
+        self.send_command(SomeGCodes.SET_RELETIVE_POSITIONING_GCODE, need_to_await)
+        gcode = "G01" 
+        if x is not None:
+            gcode += f" X{x}"
+        if y is not None:
+            gcode += f" Y{y}"
+        if z is not None:
+            gcode += f" Z{z}"
+        gcode += f" F{speed}"
+        self.send_command(gcode, need_to_await)
+        self.send_command(SomeGCodes.SET_ABSOLUTE_POSITIONING_GCODE, need_to_await)
+        return
+    
+    def get_pos(self) -> Tuple[float, float, float]:
+        """ M114 -> X:123.00 Y:456.00 Z:78.00 """
+        # response = self.send_command("M114", need_to_await=True)
+        if not self.serial or not self.serial.is_open:
+            raise Exception("Device is not connected")
 
-    def getpos(self) -> Tuple[float, float, float]:
-        """Получить текущую позицию (парсинг из M114)."""
-        response = self.send_command("M114", need_to_await=True)
-        # Парсим ответ вида "X:123.00 Y:456.00 Z:78.00"
-        for line in response.split("\n"):
+        # if need_to_await:
+            # self.clear_buffer()
+            # time.sleep(0.01)
+
+        self.serial.write(f"M114\n".encode())
+        while True:
+            line = self.serial.readline().decode()
             if line.startswith("X:"):
                 parts = line.split()
                 self.position["X"] = float(parts[0][2:])
                 self.position["Y"] = float(parts[1][2:])
                 self.position["Z"] = float(parts[2][2:])
+                break
+            if not line:
+                return
 
         return (self.position["X"], self.position["Y"], self.position["Z"])
 
@@ -145,7 +171,9 @@ class GCodeSenter:
     ) -> None:
         """Калибровка осей (G28)."""
         if all((home_x, home_y, home_z)):
-            self.send_command("G28", need_to_await=need_to_await)
+            self.send_command("G28 Z", need_to_await=need_to_await)
+            self.send_command("G28 X", need_to_await=need_to_await)
+            self.send_command("G28 Y", need_to_await=need_to_await)
             return
 
         if home_x:
@@ -167,32 +195,32 @@ class GCodeSenter:
                 return port.device
         return None
 
-    def send_command(self, command: str, need_to_await: bool = True) -> str:
+    def send_command(self, command: str, need_response: bool = True, need_to_await: bool = True) -> str:
         """Отправить G-код и дождаться ответа (если wait=True)."""
         if not self.serial or not self.serial.is_open:
             raise Exception("Device is not connected")
 
-        if need_to_await:
-            self.clear_buffer()
-            time.sleep(0.01)
+        # if need_to_await:
+            # self.clear_buffer()
+            # time.sleep(0.01)
 
         self.serial.write(f"{command}\n".encode())
-        if not need_to_await:
-            return ""
 
-        self.serial.write("M400\n".encode())
-        ok_count = 0
-        response = []
-        while True:
-            line = self.serial.readline().decode()
-            if line:
-                response.append(line)
-            if "ok" in line:
-                ok_count += 1
-                if ok_count == 2:
-                    break
-
-        return "\n".join(response)
+        if need_to_await or ("G1" in command) or ("G01" in command):
+            self.serial.write("M400\n".encode())
+            ok_count = 0
+            response = []
+            while True:
+                line = self.serial.readline().decode()
+                if line:
+                    response.append(line)
+                if "ok" in line:
+                    ok_count += 1
+                    if ok_count == 2:
+                        break
+            return "\n".join(response)
+        
+        return ""
 
     def clear_buffer(self) -> None:
         line = self.serial.readline().decode()
@@ -215,4 +243,13 @@ class GCodeSenter:
                 if "Marlin" in line or "ok" in line:
                     return True
         raise Exception("Device did not respond")
+        return
+
+    def user_ask_loop(self) -> None:
+        while True:
+            gcode = input("> ")
+            if gcode == "q":
+                break
+            response = self.send_command(gcode)
+            print(response)
         return
