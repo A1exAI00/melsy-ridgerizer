@@ -5,21 +5,29 @@ import cv2
 
 class Camera:
     def __init__(
-        self, width: int = 3840, height: int = 2160, buffer_size: int = 1
+        self,
+        index: int,
+        width: int = 3840,
+        height: int = 2160,
+        buffer_size: int = 1,
+        exposure: int = 100,
     ) -> None:
+        self.index = index
         self.width = width
         self.height = height
         self.buffer_size = buffer_size
+        self.exposure = exposure
         return
 
     def create_capture(self) -> None:
-        self.capture = cv2.VideoCapture(3)
+        self.capture = cv2.VideoCapture(self.index)
         if not self.capture.isOpened():
             print("Error: Could not open camera.")
             exit()
-        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 3840)
-        self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 2160)
-        self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        self.capture.set(cv2.CAP_PROP_BUFFERSIZE, self.buffer_size)
+        self.capture.set(cv2.CAP_PROP_EXPOSURE, self.exposure)
         return
 
     def save_image(
