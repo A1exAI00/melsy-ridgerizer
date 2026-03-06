@@ -3,12 +3,11 @@ from PySide6.QtWidgets import *
 from PySide6.QtCore import *
 from PySide6.QtGui import *
 
-# Import your existing modules
 from src.GCodeSender import (
     GCodeSenter,
     DEVICES,
     SomeGCodes,
-)  # Assuming gcode code is in gcode_module.py
+)
 
 
 class AxisControlWidget(QWidget):
