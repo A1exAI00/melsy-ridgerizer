@@ -1,3 +1,4 @@
+from os import getcwd
 import sys
 from PySide6.QtWidgets import *
 from PySide6.QtCore import *
@@ -79,7 +80,7 @@ class AxisControlWidget(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Camera & Motion Control")
+        self.setWindowTitle("Jog panel")
         self.setGeometry(100, 100, 300, 300)
 
         self.gcode_sender = GCodeSenter(DEVICES[0])
@@ -168,6 +169,16 @@ class MainWindow(QMainWindow):
         controls_layout.addLayout(positions_layout_1)
         controls_layout.addLayout(positions_layout_2)
         controls_layout.addLayout(positions_layout_3)
+
+        save_open_positions_layout = QHBoxLayout()
+        self.save_positons = QPushButton("Save positions")
+        self.save_positons.clicked.connect(self.save_positions)
+        self.open_positons = QPushButton("Open positions")
+        self.open_positons.clicked.connect(self.open_positions)
+        save_open_positions_layout.addWidget(self.save_positons)
+        save_open_positions_layout.addWidget(self.open_positons)
+
+        controls_layout.addLayout(save_open_positions_layout)
 
         apply_layout = QHBoxLayout()
         self.apply_btn = QPushButton("Apply")
@@ -291,6 +302,50 @@ class MainWindow(QMainWindow):
         self.widget_z.target_edit.setText(f"{z:.2f}")
         self.widget_z.move_to_target()
         return
+
+    def save_positions(self):
+        file_path, selected_filter = QFileDialog.getSaveFileName(
+            self, "Save Positions", getcwd(), "Text Files (*.txt);;All Files (*)"
+        )
+
+        if file_path:
+            if not file_path.endswith(".txt"):
+                file_path += ".txt"
+
+            try:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(f"{self.position_1_x.text()}\n")
+                    f.write(f"{self.position_1_y.text()}\n")
+                    f.write(f"{self.position_1_z.text()}\n")
+                    f.write(f"{self.position_2_x.text()}\n")
+                    f.write(f"{self.position_2_y.text()}\n")
+                    f.write(f"{self.position_2_z.text()}\n")
+                    f.write(f"{self.position_3_x.text()}\n")
+                    f.write(f"{self.position_3_y.text()}\n")
+                    f.write(f"{self.position_3_z.text()}\n")
+            except Exception as e:
+                QMessageBox.critical(self, "Error saving file", str(e))
+
+    def open_positions(self):
+        file_path, selected_filter = QFileDialog.getOpenFileName(
+            self, "Open Positions", getcwd(), "Text Files (*.txt);;All Files (*)"
+        )
+
+        if file_path:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    contents = f.readlines()
+                    self.position_1_x.setText(contents[0])
+                    self.position_1_y.setText(contents[1])
+                    self.position_1_z.setText(contents[2])
+                    self.position_2_x.setText(contents[3])
+                    self.position_2_y.setText(contents[4])
+                    self.position_2_z.setText(contents[5])
+                    self.position_3_x.setText(contents[6])
+                    self.position_3_y.setText(contents[7])
+                    self.position_3_z.setText(contents[8])
+            except Exception as e:
+                QMessageBox.critical(self, "Error opening file", str(e))
 
 
 if __name__ == "__main__":
