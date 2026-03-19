@@ -54,7 +54,6 @@ class GCodeSenter:
     def __init__(self, config: DeviceConfig) -> None:
         self.config = config
         self.serial = None
-        self.position = {"X": 0, "Y": 0, "Z": 0}
         return
 
     def connect(self) -> None:
@@ -77,7 +76,6 @@ class GCodeSenter:
     def close(self) -> None:
         if self.serial and self.serial.is_open:
             self.serial.close()
-            self._log("Connection closed", level=2)
         return
 
     def go_to(
@@ -118,21 +116,20 @@ class GCodeSenter:
         if not self.serial or not self.serial.is_open:
             raise Exception("Device is not connected")
 
-        # self.clear_buffer()
-
         self.serial.write(f"M114\n".encode())
+        position = []
         while True:
             line = self.serial.readline().decode()
             if line.startswith("X:"):
                 parts = line.split()
-                self.position["X"] = float(parts[0][2:])
-                self.position["Y"] = float(parts[1][2:])
-                self.position["Z"] = float(parts[2][2:])
+                position.append(float(parts[0][2:]))
+                position.append(float(parts[1][2:]))
+                position.append(float(parts[2][2:]))
                 break
             if not line:
                 return
 
-        return (self.position["X"], self.position["Y"], self.position["Z"])
+        return position
 
     def home(
         self,
@@ -171,9 +168,6 @@ class GCodeSenter:
         if not self.serial or not self.serial.is_open:
             raise Exception("Device is not connected")
 
-        # if need_to_await:
-        #     self.clear_buffer()
-
         self.serial.write(f"{command}\n".encode())
 
         if need_to_await:
@@ -194,11 +188,4 @@ class GCodeSenter:
 
     def clear_buffer(self) -> None:
         self.serial.reset_input_buffer()
-        return
-
-    def print_buffer(self) -> None:
-        line = self.serial.readline().decode()
-        while line:
-            print(line)
-            line = self.serial.readline().decode()
         return
