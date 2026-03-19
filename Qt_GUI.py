@@ -1,14 +1,17 @@
-from os import getcwd
+from os import getcwd, path, listdir
 import sys
 from PySide6.QtWidgets import *
 from PySide6.QtCore import *
 from PySide6.QtGui import *
+import cv2
+from ultralytics import YOLO
 
 from src.GCodeSender import (
     GCodeSenter,
     DEVICES,
     SomeGCodes,
 )
+from src.Camera import Camera
 
 
 class AxisControlWidget(QWidget):
@@ -41,7 +44,6 @@ class AxisControlWidget(QWidget):
         self.step_edit.setFixedWidth(60)
         layout.addWidget(self.step_edit)
 
-        layout.addStretch()
         self.setLayout(layout)
 
     def move_minus(self):
@@ -80,6 +82,17 @@ class AxisControlWidget(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+
+        directory_images = path.join("datasets", "data_square_size", "images", "val")
+        filename_image = listdir(directory_images)[22]
+        image_path = path.join(directory_images, filename_image)
+
+        model = YOLO(trained_model_path)
+        results = model(
+            image_path,
+            # iou=1.0,
+            # conf=0.2,
+        )
         self.setWindowTitle("Jog panel")
         self.setGeometry(100, 100, 300, 300)
 
@@ -89,7 +102,9 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(main_widget)
         main_layout = QVBoxLayout(main_widget)
 
-        controls_group = QGroupBox("Axis Controls")
+        splitter = QSplitter(Qt.Horizontal)
+
+        controls_widget = QWidget()
         controls_layout = QVBoxLayout()
 
         self.widget_x = AxisControlWidget("X", self.gcode_sender)
@@ -120,7 +135,7 @@ class MainWindow(QMainWindow):
         btn_layout.addStretch()
         controls_layout.addLayout(btn_layout)
 
-        controls_group.setLayout(controls_layout)
+        controls_widget.setLayout(controls_layout)
 
         positions_layout_1 = QHBoxLayout()
         self.position_1 = QPushButton("Eu position")
@@ -192,8 +207,27 @@ class MainWindow(QMainWindow):
         apply_layout.addWidget(self.move_prev_btn)
 
         controls_layout.addLayout(apply_layout)
+        controls_layout.addStretch()
 
-        main_layout.addWidget(controls_group)
+        camera_widget = QWidget()
+        camera_layout = QVBoxLayout()
+        camera_widget.setLayout(camera_layout)
+
+        self.camera_feed = QLabel("Camera")
+        self.camera_feed.setAlignment(Qt.AlignCenter)
+        camera_layout.addWidget(self.camera_feed)
+
+        self.camera = Camera(4, width=1000, height=1000)
+        self.camera.create_capture()
+
+        self.camera_timer = QTimer()
+        self.camera_timer.timeout.connect(self.update_camera)
+        self.camera_timer.start(30)
+
+        splitter.addWidget(controls_widget)
+        splitter.addWidget(camera_widget)
+
+        main_layout.addWidget(splitter)
 
     def connect_device(self):
         try:
@@ -346,6 +380,59 @@ class MainWindow(QMainWindow):
                     self.position_3_z.setText(contents[8])
             except Exception as e:
                 QMessageBox.critical(self, "Error opening file", str(e))
+        return
+    
+    def detect_ridges(self, frame):
+
+        for result in results:
+            if result.obb is not None:
+                obb_boxes = result.obb.xyxyxyxy
+                confidences = result.obb.conf
+                class_ids = result.obb.cls
+
+                print(f"Found {len(obb_boxes)} windows:")
+                for i, [box, conf] in enumerate(zip(obb_boxes, confidences)):
+                    # if conf < 0.5:
+                    #     continue
+                    box = box.tolist()
+                    xs = [box[i][0] for i in range(len(box))]
+                    ys = [box[i][1] for i in range(len(box))]
+                    xs.append(xs[0])
+                    ys.append(ys[0])
+                    ax.plot(xs, ys, "g-", markersize=8)
+                    # print(f"  Window {i+1}: Corners: {box}, Confidence: {confidences[i]:.2f}")
+            else:
+                print("No windows detected in this image.")
+
+    def update_camera(self):
+        """Convert OpenCV image to QImage and display it"""
+        # Convert BGR to RGB
+        ret, frame = self.camera.capture.read()
+        rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        # Get image dimensions
+        h, w, ch = rgb_image.shape
+        bytes_per_line = ch * w
+
+        # Convert to QImage
+        qt_image = QImage(
+            rgb_image.data,
+            w,
+            h,
+            bytes_per_line,
+            QImage.Format_RGB888,
+        )
+
+        # Scale image to fit label while maintaining aspect ratio
+        scaled_pixmap = QPixmap.fromImage(qt_image).scaled(
+            self.camera_feed.size(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+
+        # Display in label
+        self.camera_feed.setPixmap(scaled_pixmap)
+        return
 
 
 if __name__ == "__main__":
