@@ -218,7 +218,7 @@ class AxisControlWidget(QWidget):
         try:
             self.target_pos = float(self.target_edit.text())
             kwargs = {self.axis_name.lower(): self.target_pos}
-            self.gcode_sender.go_to(**kwargs, need_to_await=True)
+            self.gcode_sender.go_to(**kwargs, need_to_await=False)
         except ValueError as e:
             QMessageBox.warning(self, "Error", str(e))
         return
