@@ -1,4 +1,4 @@
-from os import makedirs, path
+from src.misc import get_next_filename
 
 import cv2
 
@@ -35,27 +35,13 @@ class Camera:
     ) -> None:
         ret, frame = self.capture.read()
         cv2.imwrite(
-            self.get_next_filename(directory, filename, extension) + extension, frame
+            get_next_filename(directory, filename, extension) + extension, frame
         )
         return
 
     def close(self) -> None:
         self.capture.release()
         cv2.destroyAllWindows()
-        return
-
-    @staticmethod
-    def get_next_filename(
-        directory: str, base_name: str = "image", extension: str = "png"
-    ) -> str:
-        makedirs(directory, exist_ok=True)
-
-        counter = 1
-        while True:
-            filename = path.join(directory, f"{base_name}{counter:03d}.{extension}")
-            if not path.exists(filename):
-                return filename
-            counter += 1
         return
 
 
