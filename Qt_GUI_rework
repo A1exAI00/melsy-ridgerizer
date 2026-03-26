@@ -188,6 +188,25 @@ class MainWindow(QMainWindow):
 
         ###
 
+        controls_layout.addWidget(QLabel("Manual ridge detection"))
+
+        btn_layout = QHBoxLayout()
+
+        self.manual_first_ridge_btn = QPushButton("First ridge")
+        self.manual_first_ridge_btn.clicked.connect(self.manual_first_ridge_callback)
+        btn_layout.addWidget(self.manual_first_ridge_btn)
+
+        self.manual_last_ridge_btn = QPushButton("Last ridge")
+        self.manual_last_ridge_btn.clicked.connect(self.manual_last_ridge_callback)
+        btn_layout.addWidget(self.manual_last_ridge_btn)
+
+        btn_layout.addStretch()
+        controls_layout.addLayout(btn_layout)
+
+        ###
+
+        controls_layout.addWidget(QLabel("Manual ridge detection"))
+
         btn_layout = QHBoxLayout()
 
         self.deduce_last_ridge_position_btn = QPushButton("Zond is on the first ridge")
@@ -330,6 +349,14 @@ class MainWindow(QMainWindow):
         nth = int(self.measure_backlask_edit.text())
         worker = Worker(self.apparatus.measure_basklash, nth)
         self.threadpool.start(worker)
+        return
+    
+    def manual_first_ridge_callback(self) -> None:
+        self.apparatus.save_first_ridge_center()
+        return
+    
+    def manual_last_ridge_callback(self) -> None:
+        self.apparatus.save_last_ridge_center()
         return
 
     def closeEvent(self, event):
