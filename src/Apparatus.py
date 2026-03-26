@@ -307,12 +307,20 @@ class Apparatus:
         self.save_last_ridge_center()
         return
 
+    def is_ridge_index_valid(self, nth: int) -> bool:
+        return not (nth < 1 or nth > self.number_of_ridges)
+    
     def get_nth_ridge_center(self, nth: int) -> np.ndarray:
+        if not self.is_ridge_index_valid(nth):
+            raise Exception(f"Incorrent index: {nth} ∉ [1, {self.number_of_ridges}]")
+        
         first = np.array(list(self.first_ridge_center_coordinates_mm))
         last = np.array(list(self.last_ridge_center_coordinates_mm))
 
+        number_of_ridges = int(round(np.linalg.norm(last - first) / self.ridge_period))
+
         # Ridge in question
-        ridge = first + (last - first) * (nth - 1) / self.number_of_ridges
+        ridge = first + (last - first) * (nth - 1) / number_of_ridges
         return ridge
 
     def get_perp_unit_vector(self) -> np.ndarray:
@@ -334,7 +342,7 @@ class Apparatus:
 
         perp_unit_vector = self.get_perp_unit_vector()
 
-        for i in range(10):
+        for i in range(1, 10, 2):
             center = self.get_nth_ridge_center(i)
 
             # Move to a safe height right above the ridge
@@ -371,7 +379,7 @@ class Apparatus:
         return
 
     def set_target_to_nth_ridge_center(self, nth: int) -> None:
-        if nth < 1 or nth > self.number_of_ridges:
+        if not self.is_ridge_index_valid(nth):
             raise Exception(f"Incorrent index: {nth} ∉ [1, {self.number_of_ridges}]")
 
         ridge = self.get_nth_ridge_center(nth)
@@ -379,7 +387,7 @@ class Apparatus:
         return
 
     def go_to_nth_ridge_center(self, nth: int) -> None:
-        if nth < 1 or nth > self.number_of_ridges:
+        if not self.is_ridge_index_valid(nth):
             raise Exception(f"Incorrent index: {nth} ∉ [1, {self.number_of_ridges}]")
 
         # Move to safe height above ridge
@@ -393,8 +401,7 @@ class Apparatus:
         return
 
     def measure_basklash(self, nth: int) -> None:
-
-        if nth < 1 or nth > self.number_of_ridges:
+        if not self.is_ridge_index_valid(nth):
             raise Exception(f"Incorrent index: {nth} ∉ [1, {self.number_of_ridges}]")
 
         N_travels = 50
@@ -452,6 +459,7 @@ class Apparatus:
                     pass
 
         print(f"{measurements_negative=}")
+        print()
         print(f"{measurements_positive=}")
 
         return (measurements_negative, measurements_positive)
