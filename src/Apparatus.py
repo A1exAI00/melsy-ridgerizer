@@ -3,7 +3,7 @@ import numpy as np
 import cv2
 from time import sleep
 
-from src.Camera import Camera
+from src.Camera import Camera, CAMERA_MAX_HEIGHT, CAMERA_MAX_WIDTH, CameraConfig
 from src.GCodeSender import GCodeSender, SomeGCodes, DEVICES
 from src.RidgeDetection import RidgeDetection
 from src.misc import *
@@ -25,7 +25,8 @@ class Apparatus:
 
         # Connect external devices
         self.gcode_sender = self.connect_gcode_sender()
-        self.camera = Camera(4, height=1000)
+
+        self.camera = Camera(CameraConfig(index=4, width=CAMERA_MAX_WIDTH, height=1000, buffer_size=1))
         self.camera.create_capture()
 
         self.target_position = self.get_current_position()
@@ -109,8 +110,7 @@ class Apparatus:
         return
 
     def get_camera_frame(self, find_obbs: bool, draw_obbs: bool):
-        # Read camera buffer
-        ret, frame = self.camera.capture.read()
+        ret, frame = self.camera.get_image()
         if not ret:
             raise Exception("Could not get camera frame.")
 

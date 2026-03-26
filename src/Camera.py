@@ -1,43 +1,52 @@
 from src.misc import get_next_filename
+from dataclasses import dataclass
 
 import cv2
 
 
+CAMERA_MAX_WIDTH = 3840
+CAMERA_MAX_HEIGHT = 2160
+
+
+@dataclass
+class CameraConfig:
+    index: int | None = None
+    width: int | None = None
+    height: int | None = None
+    buffer_size: int | None = None
+    exposure: int | None = None
+
+
 class Camera:
-    def __init__(
-        self,
-        index: int,
-        width: int = 3840,
-        height: int = 2160,
-        buffer_size: int = 1,
-        exposure: int = 100,
-    ) -> None:
-        self.index = index
-        self.width = width
-        self.height = height
-        self.buffer_size = buffer_size
-        self.exposure = exposure
+    def __init__(self, camera_config: CameraConfig) -> None:
+        self.config = camera_config
         return
 
     def create_capture(self) -> None:
-        self.capture = cv2.VideoCapture(self.index)
+        self.capture = cv2.VideoCapture(self.config.index)
         if not self.capture.isOpened():
-            print("Error: Could not open camera.")
-            exit()
-        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-        self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-        self.capture.set(cv2.CAP_PROP_BUFFERSIZE, self.buffer_size)
-        self.capture.set(cv2.CAP_PROP_EXPOSURE, self.exposure)
+            raise Exception(f"Error: Could not open camera at index {self.config.index}")
+        
+        # Configure camera
+        if hasattr(self.config, "width") and self.config.height is not None:
+            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.width)
+        if hasattr(self.config, "height") and self.config.height is not None:
+            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.height)
+        if hasattr(self.config, "buffer_size") and self.config.buffer_size is not None:
+            self.capture.set(cv2.CAP_PROP_BUFFERSIZE, self.config.buffer_size)
+        if hasattr(self.config, "exposure") and self.config.exposure is not None:
+            self.capture.set(cv2.CAP_PROP_EXPOSURE, self.config.exposure)
         return
 
-    def save_image(
-        self, directory, filename: str = "image", extension: str = "png"
-    ) -> None:
+    def save_image(self, dir: str, name: str = "image", ext: str = "png") -> None:
         ret, frame = self.capture.read()
-        cv2.imwrite(
-            get_next_filename(directory, filename, extension) + extension, frame
-        )
+        new_filename = get_next_filename(dir, name, ext) + ext
+        cv2.imwrite(new_filename, frame)
         return
+    
+    def get_image(self):
+        ret, frame = self.capture.read()
+        return (ret, frame)
 
     def close(self) -> None:
         self.capture.release()
@@ -46,25 +55,20 @@ class Camera:
 
 
 if __name__ == "__main__":
-    # Initialize the camera (0 is usually the default built-in camera)
     cam = Camera(index=3, width=100, height=100)
     cam.create_capture()
 
     while True:
-        # Capture frame-by-frame
         ret, frame = cam.capture.read()
 
-        # If frame is read correctly, ret is True
         if not ret:
             print("Can't receive frame. Exiting ...")
             break
 
-        # Display the resulting frame
         cv2.imshow("Webcam Feed", frame)
 
         # Press 'q' to quit the window
         if cv2.waitKey(1) == ord("q"):
             break
 
-    # When everything is done, release the capture and destroy windows
     cam.close()
