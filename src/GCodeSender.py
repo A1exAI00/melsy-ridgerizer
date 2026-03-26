@@ -21,7 +21,6 @@ class DeviceConfig:
     response_timeout: float = 1
 
 
-# Конфиги всех принтеров
 DEVICES = (
     DeviceConfig(
         name="BTT MSK Mini v3.0",
@@ -55,11 +54,35 @@ class SomeGCodes:
 
 class GCodeSender:
     def __init__(self, config: DeviceConfig) -> None:
+        """Constructor for GCodeSender class.
+
+        :param config: Config for device to connect to.
+        :type config: DeviceConfig
+
+        :returns:
+        :rtype: None
+        """
         self.config = config
         self.serial = None
         return
 
+    def _find_printer_port(self) -> str | None:
+        for port in serial.tools.list_ports.comports():
+            if (
+                self.config.vid
+                and self.config.pid
+                and port.vid == self.config.vid
+                and port.pid == self.config.pid
+            ):
+                return port.device
+        return
+
     def connect(self) -> None:
+        """Establishe the connection with device.
+
+        :returns:
+        :rtype: None
+        """
         if self.serial and self.serial.is_open:
             self.close()
 
@@ -67,40 +90,51 @@ class GCodeSender:
         if not port:
             raise Exception("Device not found")
 
-        try:
-            self.serial = serial.Serial(
-                port, self.config.baudrate, timeout=self.config.response_timeout
-            )
-            return True
-        except Exception as e:
-            raise e
+        self.serial = serial.Serial(
+            port, self.config.baudrate, timeout=self.config.response_timeout
+        )
         return
 
     def close(self) -> None:
+        """Close the connection with the device.
+
+        :returns:
+        :rtype: None
+        """
         if self.serial and self.serial.is_open:
             self.serial.close()
         return
 
     def go_to(
         self,
-        x: float = None,
-        y: float = None,
-        z: float = None,
-        need_to_await=True,
+        x: float | None = None,
+        y: float | None = None,
+        z: float | None = None,
+        need_to_await: bool = False,
         speed: float = 3000,
     ) -> None:
+        """Ask device to move to coordinates (x, y, z). Sends "G1" gcode command to the device.
+
+        :param x: Horizontal coordinate along the chip.
+        :type x: float | None = None
+        :param y: Horizontal coordinate of the zond perpendicular to the chip.
+        :type y: float | None = None
+        :param z: Vertical coordinate of the zond above the chip.
+        :type z: float | None = None
+        :param need_to_await: Flag to block further commands execution until this command is finished.
+        :type need_to_await: bool = False
+        :param speed: Speed of the travel.
+        :type speed: float = 3000
+
+        :returns:
+        :rtype: None
+        """
         if x is not None and not (self.config.x_min <= x <= self.config.x_max):
-            raise ValueError(
-                f"X={x} out of borders [{self.config.x_min}, {self.config.x_max}]"
-            )
+            raise ValueError(f"X={x} ∉ [{self.config.x_min}, {self.config.x_max}]")
         if y is not None and not (self.config.y_min <= y <= self.config.y_max):
-            raise ValueError(
-                f"Y={y} out of borders [{self.config.y_min}, {self.config.y_max}]"
-            )
+            raise ValueError(f"Y={y} ∉ [{self.config.y_min}, {self.config.y_max}]")
         if z is not None and not (self.config.z_min <= z <= self.config.z_max):
-            raise ValueError(
-                f"Z={z} out of borders [{self.config.z_min}, {self.config.z_max}]"
-            )
+            raise ValueError(f"Z={z} ∉ [{self.config.z_min}, {self.config.z_max}]")
 
         gcode = "G01"
         if x is not None:
@@ -115,7 +149,13 @@ class GCodeSender:
         return
 
     def get_pos(self) -> Tuple[float, float, float]:
-        """M114 -> X:123.00 Y:456.00 Z:78.00"""
+        """Ask device what is the position.
+        Sends "M114" gcode command to the device, parses the responce like
+        `X:123.00 Y:456.00 Z:78.00` and returns (x, y, z) coordinates.
+
+        :returns: Coordinates.
+        :rtype: Tuple[float, float, float]
+        """
         if not self.serial or not self.serial.is_open:
             raise Exception("Device is not connected")
 
@@ -134,40 +174,32 @@ class GCodeSender:
 
         return position
 
-    def home(
-        self,
-        home_x: bool = True,
-        home_y: bool = True,
-        home_z: bool = True,
-        need_to_await=True,
-    ) -> None:
-        """Калибровка осей (G28)."""
-        if all((home_x, home_y, home_z)):
-            self.send_command("G28 Z", need_to_await=need_to_await)
-            self.send_command("G28 X", need_to_await=need_to_await)
-            self.send_command("G28 Y", need_to_await=need_to_await)
-            return
+    def home(self, need_to_await: bool = True) -> None:
+        """Ask device to perform homing operation.
+        Sends "G28 Z", "G28 X" and "G28 Y" gcode command to the device.
 
-        if home_x:
-            self.send_command("G28 X", need_to_await=need_to_await)
-        if home_y:
-            self.send_command("G28 Y", need_to_await=need_to_await)
-        if home_z:
-            self.send_command("G28 Z", need_to_await=need_to_await)
+        :param need_to_await: Flag to block further commands execution until this command is finished.
+        :type need_to_await: bool = True
 
+        :returns:
+        :rtype: None
+        """
+        self.send_command("G28 Z", need_to_await=need_to_await)
+        self.send_command("G28 X", need_to_await=need_to_await)
+        self.send_command("G28 Y", need_to_await=need_to_await)
         return
 
-    def _find_printer_port(self):
-        for port in serial.tools.list_ports.comports():
-            if (
-                self.config.vid
-                and self.config.pid
-                and (port.vid == self.config.vid and port.pid == self.config.pid)
-            ):
-                return port.device
-        return None
-
     def send_command(self, command: str, need_to_await: bool = True) -> str:
+        """Send generic command.
+
+        :param command: Command to send.
+        :type command: str
+        :param need_to_await: Flag to block further commands execution until this command is finished.
+        :type need_to_await: bool = True
+
+        :returns: Responce from the device. Responce is empty if `need_to_await = False`
+        :rtype: str
+        """
         if not self.serial or not self.serial.is_open:
             raise Exception("Device is not connected")
 
@@ -193,6 +225,11 @@ class GCodeSender:
         return ""
 
     def clear_buffers(self) -> None:
+        """Clear input and output COM port buffers. Sleep for 0.1s after that.
+
+        :returns:
+        :rtype: None
+        """
         self.serial.reset_input_buffer()
         self.serial.reset_output_buffer()
         sleep(0.1)
