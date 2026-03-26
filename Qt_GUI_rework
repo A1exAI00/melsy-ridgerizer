@@ -206,10 +206,18 @@ class MainWindow(QMainWindow):
         go_to_ridge_layout = QHBoxLayout()
         self.ridge_index_edit = QLineEdit()
         self.go_to_ridge_btn = QPushButton("Go to ridge")
-        # self.go_to_ridge_btn.clicked.connect(self.go_to_ridge_callback)
+        self.go_to_ridge_btn.clicked.connect(self.go_to_ridge_callback)
         go_to_ridge_layout.addWidget(self.ridge_index_edit)
         go_to_ridge_layout.addWidget(self.go_to_ridge_btn)
         controls_layout.addLayout(go_to_ridge_layout)
+
+        measure_backlask_layout = QHBoxLayout()
+        self.measure_backlask_edit = QLineEdit()
+        self.measure_backlask_btn = QPushButton("Measure basklash")
+        self.measure_backlask_btn.clicked.connect(self.measure_backlask_callback)
+        measure_backlask_layout.addWidget(self.measure_backlask_edit)
+        measure_backlask_layout.addWidget(self.measure_backlask_btn)
+        controls_layout.addLayout(measure_backlask_layout)
 
         controls_layout.addStretch()
 
@@ -309,6 +317,18 @@ class MainWindow(QMainWindow):
 
     def run_btn_callback(self) -> None:
         worker = Worker(self.apparatus.run)
+        self.threadpool.start(worker)
+        return
+    
+    def go_to_ridge_callback(self) -> None:
+        nth = int(self.ridge_index_edit.text())
+        worker = Worker(self.apparatus.go_to_nth_ridge_center, nth)
+        self.threadpool.start(worker)
+        return
+    
+    def measure_backlask_callback(self) -> None:
+        nth = int(self.measure_backlask_edit.text())
+        worker = Worker(self.apparatus.measure_basklash, nth)
         self.threadpool.start(worker)
         return
 

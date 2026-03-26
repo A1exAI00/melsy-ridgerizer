@@ -245,8 +245,14 @@ class Apparatus:
         self.set_terget_reletive_to_current([0.0, -2.0, 0.0])
         self.move_to_target_position(need_to_await=True)
 
+        # Sleep to allow the image to settle
+        sleep(2)
+
         # Get first and last ridges in frame1 coordinates
         _, first_on_frame1, last_on_frame1, period1 = self.get_camera_frame(True, False)
+        print(f"{first_on_frame1=}")
+        print(f"{last_on_frame1=}")
+        print(f"{period1=}")
 
         # Save pixels per mm if it is not measured
         if self.pixels_per_mm_coeff is None:
@@ -261,17 +267,20 @@ class Apparatus:
         self.set_terget_reletive_to_current(
             [
                 vec_one_ridge[0] * self.number_of_ridges / self.pixels_per_mm_coeff,
-                -vec_one_ridge[1] * self.number_of_ridges / self.pixels_per_mm_coeff,
+                0.0,
                 0.0,
             ]
         )
         self.move_to_target_position(need_to_await=True)
 
         # Sleep to allow the image to settle
-        sleep(1)
+        sleep(2)
 
         # Get last ridge in frame2 coordinates
-        _, last_on_frame2, _, period2 = self.get_camera_frame(True, False)
+        _, first_on_frame2, last_on_frame2, period2 = self.get_camera_frame(True, False)
+        print(f"{first_on_frame2=}")
+        print(f"{last_on_frame2=}")
+        print(f"{period2=}")
 
         # Move back into a frame
         self.set_terget_reletive_to_current([0.0, 2.0, 0.0])
@@ -284,7 +293,7 @@ class Apparatus:
         self.set_terget_reletive_to_current(
             [
                 vec_FL[0] / self.pixels_per_mm_coeff,
-                vec_FL[1] / self.pixels_per_mm_coeff,
+                -vec_FL[1] / self.pixels_per_mm_coeff,
                 0.0,
             ]
         )
@@ -298,12 +307,12 @@ class Apparatus:
         self.save_last_ridge_center()
         return
 
-    def get_nth_ridge_center(self, n: int) -> np.ndarray:
+    def get_nth_ridge_center(self, nth: int) -> np.ndarray:
         first = np.array(list(self.first_ridge_center_coordinates_mm))
         last = np.array(list(self.last_ridge_center_coordinates_mm))
 
         # Ridge in question
-        ridge = first + (last - first) * n / self.number_of_ridges
+        ridge = first + (last - first) * (nth - 1) / self.number_of_ridges
         return ridge
 
     def get_perp_unit_vector(self) -> np.ndarray:
@@ -325,9 +334,9 @@ class Apparatus:
 
         perp_unit_vector = self.get_perp_unit_vector()
 
-        for i in range(20):
-
+        for i in range(10):
             center = self.get_nth_ridge_center(i)
+
             # Move to a safe height right above the ridge
             self.set_target_position(center.tolist())
             self.set_terget_reletive_to_current(
@@ -341,11 +350,11 @@ class Apparatus:
 
             # Move along the ridge back and forth to apply eutectic
             self.set_target_position(
-                (center + perp_unit_vector * self.eutectic_apply_length).tolist()
+                (center + perp_unit_vector * self.eutectic_apply_length / 2).tolist()
             )
             self.move_to_target_position(need_to_await=True)
             self.set_target_position(
-                (center - perp_unit_vector * self.eutectic_apply_length).tolist()
+                (center - perp_unit_vector * self.eutectic_apply_length / 2).tolist()
             )
             self.move_to_target_position(need_to_await=True)
 
@@ -360,6 +369,92 @@ class Apparatus:
             )
             self.move_to_target_position(need_to_await=True)
         return
+
+    def set_target_to_nth_ridge_center(self, nth: int) -> None:
+        if nth < 1 or nth > self.number_of_ridges:
+            raise Exception(f"Incorrent index: {nth} ∉ [1, {self.number_of_ridges}]")
+
+        ridge = self.get_nth_ridge_center(nth)
+        self.set_target_position(ridge.tolist())
+        return
+
+    def go_to_nth_ridge_center(self, nth: int) -> None:
+        if nth < 1 or nth > self.number_of_ridges:
+            raise Exception(f"Incorrent index: {nth} ∉ [1, {self.number_of_ridges}]")
+
+        # Move to safe height above ridge
+        self.set_target_to_nth_ridge_center(nth)
+        self.set_terget_reletive_to_current([0.0, 0.0, -self.safe_height_above_ridge])
+        self.move_to_target_position()
+
+        # Move on the ridge
+        self.set_target_to_nth_ridge_center(nth)
+        self.move_to_target_position()
+        return
+
+    def measure_basklash(self, nth: int) -> None:
+
+        if nth < 1 or nth > self.number_of_ridges:
+            raise Exception(f"Incorrent index: {nth} ∉ [1, {self.number_of_ridges}]")
+
+        N_travels = 50
+        N_frame_measurements = 5
+
+        measurements_negative = []
+        measurements_positive = []
+        for i in range(N_travels):
+            # Move from the negative direction
+            self.set_target_to_nth_ridge_center(nth)
+            self.set_terget_reletive_to_current([-0.2, 0.0, 0.0])
+            self.set_terget_reletive_to_current([0.0, -2.0, 0.0])
+            self.move_to_target_position(need_to_await=True)
+            self.set_target_to_nth_ridge_center(nth)
+            self.set_terget_reletive_to_current([0.0, -2.0, 0.0])
+            self.move_to_target_position(need_to_await=True)
+
+            # Wait for frame to settle
+            sleep(1)
+
+            # Measure
+            for j in range(N_frame_measurements):
+                try:
+                    _, first, last, period = self.get_camera_frame(True, False)
+                    measurement = []
+                    measurement.append(first.tolist())
+                    measurement.append(last.tolist())
+                    measurement.append(float(period))
+                    measurements_negative.append(measurement)
+                except:
+                    pass
+
+            # Move from the positive direction
+            self.set_target_to_nth_ridge_center(nth)
+            self.set_terget_reletive_to_current([0.2, 0.0, 0.0])
+            self.set_terget_reletive_to_current([0.0, -2.0, 0.0])
+            self.move_to_target_position(need_to_await=True)
+            self.set_target_to_nth_ridge_center(nth)
+            self.set_terget_reletive_to_current([0.0, -2.0, 0.0])
+            self.move_to_target_position(need_to_await=True)
+
+            # Wait for frame to settle
+            sleep(1)
+
+            # Measure
+            for j in range(N_frame_measurements):
+                try:
+                    _, first, last, period = self.get_camera_frame(True, False)
+                    measurement = []
+                    measurement.append(first.tolist())
+                    measurement.append(last.tolist())
+                    measurement.append(float(period))
+                    measurements_positive.append(measurement)
+                except:
+                    pass
+
+        print(f"{measurements_negative=}")
+        print(f"{measurements_positive=}")
+
+        return (measurements_negative, measurements_positive)
 
     def close(self) -> None:
         self.gcode_sender.close()

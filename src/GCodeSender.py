@@ -1,8 +1,9 @@
-import serial
-import serial.tools.list_ports
-
+from time import sleep
 from dataclasses import dataclass
 from typing import Tuple
+
+import serial
+import serial.tools.list_ports
 
 
 @dataclass
@@ -34,6 +35,7 @@ DEVICES = (
         z_max=260,
     ),
 )
+
 
 @dataclass
 class SomeGCodes:
@@ -111,9 +113,9 @@ class GCodeSender:
 
         self.send_command(gcode, need_to_await)
         return
-    
+
     def get_pos(self) -> Tuple[float, float, float]:
-        """ M114 -> X:123.00 Y:456.00 Z:78.00 """
+        """M114 -> X:123.00 Y:456.00 Z:78.00"""
         if not self.serial or not self.serial.is_open:
             raise Exception("Device is not connected")
 
@@ -169,6 +171,9 @@ class GCodeSender:
         if not self.serial or not self.serial.is_open:
             raise Exception("Device is not connected")
 
+        if need_to_await:
+            self.clear_buffers()
+
         self.serial.write(f"{command}\n".encode())
 
         if need_to_await:
@@ -184,9 +189,11 @@ class GCodeSender:
                     if ok_count == 2:
                         break
             return "\n".join(response)
-        
+
         return ""
 
-    def clear_buffer(self) -> None:
+    def clear_buffers(self) -> None:
         self.serial.reset_input_buffer()
+        self.serial.reset_output_buffer()
+        sleep(0.1)
         return
