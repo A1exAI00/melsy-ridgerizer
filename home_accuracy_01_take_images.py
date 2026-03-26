@@ -1,6 +1,6 @@
 import time
 
-from src.GCodeSender import GCodeSenter, SomeGCodes, DEVICES
+from src.GCodeSender import GCodeSender, SomeGCodes, DEVICES
 from src.Camera import Camera
 
 
@@ -13,7 +13,7 @@ initial_commands = [
     SomeGCodes.HOME_X_GCODE,
 ]
 
-sender = GCodeSenter(DEVICES[0])
+sender = GCodeSender(DEVICES[0])
 sender.connect()
 
 camera = Camera()
