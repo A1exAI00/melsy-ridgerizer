@@ -81,7 +81,7 @@ class Apparatus:
             self.target_position[0] = value
         elif coord.lower() == "y":
             self.target_position[1] = value
-        elif coord.lower() == "y":
+        elif coord.lower() == "z":
             self.target_position[2] = value
         else:
             raise Exception(f"Unknown coordinate: {coord}")
