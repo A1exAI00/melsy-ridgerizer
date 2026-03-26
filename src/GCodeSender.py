@@ -44,13 +44,14 @@ class SomeGCodes:
     SET_MICROSTEPPING_GCODE: str = "M350 X8 Y8 Z32"
     SET_ABSOLUTE_POSITIONING_GCODE: str = "G90"
     SET_RELETIVE_POSITIONING_GCODE: str = "G91"
+    SET_BACKLASH_CORRECTION_GCODE: str = "M425 F1 S0 X3 Y0.1 Z0.0"
     HOME_GCODE: str = "G28"
     HOME_X_GCODE: str = "G28 X"
     HOME_Y_GCODE: str = "G28 Y"
     HOME_Z_GCODE: str = "G28 Z"
 
 
-class GCodeSenter:
+class GCodeSender:
     def __init__(self, config: DeviceConfig) -> None:
         self.config = config
         self.serial = None

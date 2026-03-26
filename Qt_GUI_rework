@@ -1,158 +1,46 @@
-from os import getcwd, path, listdir
 import sys
-from time import sleep
 
-import numpy as np
-import torch
 from PySide6.QtWidgets import *
 from PySide6.QtCore import *
 from PySide6.QtGui import *
+from PySide6.QtCore import QRunnable, QThreadPool, QTimer, Slot
+
 import cv2
-from ultralytics import YOLO
 
-from src.GCodeSender import GCodeSenter, DEVICES, SomeGCodes
-from src.Camera import Camera
-
-
-def is_float(string):
-    try:
-        float(string)
-        return True
-    except ValueError:
-        return False
+from src.Apparatus import Apparatus
+from src.misc import *
 
 
-class RidgeDetectionModel:
-    def __init__(self, model_path: str) -> None:
-        self.model_path = model_path
-        self.model = YOLO(self.model_path)
-        return
+class Worker(QRunnable):
+    """Worker thread.
 
-    @staticmethod
-    def conv_box_to_xyxyxyxy(box):
-        return torch.flatten(box).tolist()
+    Inherits from QRunnable to handler worker thread setup, signals and wrap-up.
 
-    @staticmethod
-    def conv_xyxyxyxy_to_box(x1, y1, x2, y2, x3, y3, x4, y4):
-        return torch.tensor(np.array([x1, y1, x2, y2, x3, y3, x4, y4]).reshape((4, 2)))
+    :param callback: The function callback to run on this worker thread.
+                     Supplied args and kwargs will be passed through to the runner.
+    :type callback: function
+    :param args: Arguments to pass to the callback function
+    :param kwargs: Keywords to pass to the callback function
+    """
 
-    @staticmethod
-    def get_box_long_side_points(box):
-        x1, y1, x2, y2, x3, y3, x4, y4 = RidgeDetectionModel.conv_box_to_xyxyxyxy(box)
-        distances = {}
-        distances[(x1, y1, x2, y2)] = np.hypot(x2 - x1, y2 - y1)
-        distances[(x2, y2, x3, y3)] = np.hypot(x3 - x2, y3 - y2)
-        return max(distances, key=distances.get)
+    def __init__(self, fn, *args, **kwargs):
+        super().__init__()
+        self.fn = fn
+        self.args = args
+        self.kwargs = kwargs
 
-    @staticmethod
-    def get_box_angle(box):
-        x1, y1, x2, y2 = RidgeDetectionModel.get_box_long_side_points(box)
-        alpha = np.arctan2(x1 - x2, y1 - y2)
-        return alpha
-
-    @staticmethod
-    def get_box_center(box):
-        xs = [box[i][0] for i in range(len(box))]
-        ys = [box[i][1] for i in range(len(box))]
-        center_x = np.mean(xs)
-        center_y = np.mean(ys)
-        return (center_x, center_y)
-
-    @staticmethod
-    def get_box_short_side_points(box):
-        x1, y1, x2, y2, x3, y3, x4, y4 = RidgeDetectionModel.conv_box_to_xyxyxyxy(box)
-        distances = {}
-        distances[(x1, y1, x2, y2)] = np.hypot(x2 - x1, y2 - y1)
-        distances[(x2, y2, x3, y3)] = np.hypot(x3 - x2, y3 - y2)
-        return min(distances, key=distances.get)
-
-    @staticmethod
-    def filter_invalid_by_centers(
-        box_i, conf_i, box_j, conf_j, x_threshold, y_threshold
-    ):
-        xs_i = [box_i[i][0] for i in range(len(box_i))]
-        ys_i = [box_i[i][1] for i in range(len(box_i))]
-        center_x_i = np.mean(xs_i)
-        center_y_i = np.mean(ys_i)
-        xs_j = [box_j[i][0] for i in range(len(box_j))]
-        ys_j = [box_j[i][1] for i in range(len(box_j))]
-        center_x_j = np.mean(xs_j)
-        center_y_j = np.mean(ys_j)
-
-        if (
-            abs(center_x_i - center_x_j) < x_threshold
-            or abs(center_y_i - center_y_j) < y_threshold
-        ):
-            if conf_i > conf_j:
-                return (False, True)
-            else:
-                return (True, False)
-        return (False, False)
-
-    @staticmethod
-    def rotate_vector(vec, alpha_rad):
-        rot_matrix = np.array(
-            [
-                [np.cos(alpha_rad), -np.sin(alpha_rad)],
-                [np.sin(alpha_rad), np.cos(alpha_rad)],
-            ]
-        )
-        rotated_vec = np.dot(vec, rot_matrix)
-        return rotated_vec
-
-    @staticmethod
-    def rotate_tensor(vec, alpha_rad):
-        return torch.from_numpy(RidgeDetectionModel.rotate_vector(vec, alpha_rad))
-
-    @staticmethod
-    def sort_boxes(boxes, confidences):
-        boxes_and_confidences_sorted = sorted(
-            zip(boxes, confidences),
-            key=lambda box_conf: RidgeDetectionModel.get_box_center(box_conf[0])[0],
-        )
-        boxes_sorted = [box_conf[0] for box_conf in boxes_and_confidences_sorted]
-        confidences_sorted = [box_conf[1] for box_conf in boxes_and_confidences_sorted]
-        return boxes_sorted, confidences_sorted
-
-    def run_detection(self, image):
-        results = self.model.predict(source=image)
-
-        obb_boxes = []
-        confidences = []
-        for result in results:
-            if result.obb is not None:
-                obb_boxes = result.obb.xyxyxyxy
-                confidences = result.obb.conf
-            else:
-                continue
-
-        obb_boxes_invalid_indexes = []
-        for i, [box_i, conf_i] in enumerate(zip(obb_boxes, confidences)):
-            for j in range(i + 1, len(obb_boxes)):
-                box_j, conf_j = obb_boxes[j], confidences[j]
-                invalid_i, invalid_j = self.filter_invalid_by_centers(
-                    box_i, conf_i, box_j, conf_j, 50.0, 0.0
-                )
-                if invalid_i:
-                    obb_boxes_invalid_indexes.append(i)
-                if invalid_j:
-                    obb_boxes_invalid_indexes.append(j)
-
-        obb_boxes_valid = []
-        confidences_valid = []
-        for i, [box, conf] in enumerate(zip(obb_boxes, confidences)):
-            if i not in obb_boxes_invalid_indexes:
-                obb_boxes_valid.append(box)
-                confidences_valid.append(conf)
-
-        return RidgeDetectionModel.sort_boxes(obb_boxes_valid, confidences_valid)
+    @Slot()
+    def run(self):
+        """Initialise the runner function with passed args, kwargs."""
+        self.fn(*self.args, **self.kwargs)
 
 
 class AxisControlWidget(QWidget):
-    def __init__(self, axis_name: str, gcode_sender: GCodeSenter) -> None:
+    def __init__(self, axis_name: str, apparatus: Apparatus) -> None:
         super().__init__()
         self.axis_name = axis_name.upper()
-        self.gcode_sender = gcode_sender
+        self.apparatus = apparatus
+        self.target_position_refresh_callback: callable | None = None
         self.target_pos = 0.0
 
         self.setup_layout()
@@ -170,12 +58,12 @@ class AxisControlWidget(QWidget):
 
         self.minus_btn = QPushButton("-")
         self.minus_btn.setFixedWidth(40)
-        self.minus_btn.clicked.connect(self.move_minus_callback)
+        self.minus_btn.clicked.connect(lambda: self.move_increment_callback("-"))
         layout.addWidget(self.minus_btn)
 
         self.plus_btn = QPushButton("+")
         self.plus_btn.setFixedWidth(40)
-        self.plus_btn.clicked.connect(self.move_plus_callback)
+        self.plus_btn.clicked.connect(lambda: self.move_increment_callback("+"))
         layout.addWidget(self.plus_btn)
 
         self.step_edit = QLineEdit("1.0")
@@ -185,160 +73,56 @@ class AxisControlWidget(QWidget):
         self.setLayout(layout)
         return
 
-    def move_minus_callback(self):
-        try:
-            current_pos = self.gcode_sender.get_pos()[
-                {"X": 0, "Y": 1, "Z": 2}[self.axis_name]
-            ]
-            step = float(self.step_edit.text())
-            self.target_pos = current_pos - step
-            self.target_edit.setText(f"{self.target_pos:.2f}")
-            self.move_to_target()
-        except ValueError:
-            QMessageBox.warning(self, "Error", "Invalid step value")
-
-    def move_plus_callback(self):
-        try:
-            current_pos = self.gcode_sender.get_pos()[
-                {"X": 0, "Y": 1, "Z": 2}[self.axis_name]
-            ]
-            step = float(self.step_edit.text())
-            self.target_pos = current_pos + step
-            self.target_edit.setText(f"{self.target_pos:.2f}")
-            self.move_to_target()
-        except ValueError:
-            QMessageBox.warning(self, "Error", "Invalid step value")
+    def set_apparatus(self, apparatus: Apparatus) -> None:
+        self.apparatus = apparatus
         return
 
+    def set_target_refresh_callback_function(self, fn: callable) -> None:
+        self.target_position_refresh_callback = fn
+
+    def move_increment_callback(self, sign: str):
+        try:
+            axis_index = {"X": 0, "Y": 1, "Z": 2}[self.axis_name.upper()]
+
+            reletive_position = [0.0, 0.0, 0.0]
+            if sign == "+":
+                reletive_position[axis_index] = float(self.step_edit.text())
+            else:
+                reletive_position[axis_index] = -float(self.step_edit.text())
+
+            self.apparatus.set_terget_reletive_to_current(reletive_position)
+            self.move_to_target()
+        except Exception as e:
+            QMessageBox.warning(self, "Error", str(e))
+
     def move_to_target_callback(self):
+        value = self.target_edit.text()
+        if is_float(value):
+            self.apparatus.set_target_position_piecewice(
+                self.axis_name, float(self.target_edit.text())
+            )
+        else:
+            raise Exception(f"Unknown position value: {value}")
         self.move_to_target()
         return
 
     def move_to_target(self):
         try:
-            self.target_pos = float(self.target_edit.text())
-            kwargs = {self.axis_name.lower(): self.target_pos}
-            self.gcode_sender.go_to(**kwargs, need_to_await=False)
-        except ValueError as e:
+            self.apparatus.move_to_target_position()
+            self.target_position_refresh_callback()
+        except Exception as e:
             QMessageBox.warning(self, "Error", str(e))
-        return
-
-
-class PositionWidget(QWidget):
-    def __init__(self, index: int):
-        super().__init__()
-        self.index = index
-        self.go_to_callback = lambda: None
-        self.put_position_callback = lambda: None
-
-        self.setup_layout()
-        return
-
-    def setup_layout(self):
-        layout = QHBoxLayout()
-        self.setLayout(layout)
-
-        label = QLabel(f"Position {self.index}")
-        layout.addWidget(label)
-
-        self.go_to_button = QPushButton("Go To")
-        self.go_to_button.setFixedWidth(80)
-        # self.go_to_button.clicked.connect(self.go_to_callback)
-        layout.addWidget(self.go_to_button)
-
-        self.put_button = QPushButton("Put")
-        self.put_button.setFixedWidth(80)
-        # self.put_button.clicked.connect(self.put_position_callback)
-        layout.addWidget(self.put_button)
-
-        self.position_x = QLineEdit(text="0.00")
-        self.position_x.setText("0.00")
-        self.position_x.setFixedWidth(80)
-        layout.addWidget(self.position_x)
-
-        self.position_y = QLineEdit(text="0.00")
-        self.position_y.setText("0.00")
-        self.position_y.setFixedWidth(80)
-        layout.addWidget(self.position_y)
-
-        self.position_z = QLineEdit(text="0.00")
-        self.position_z.setText("0.00")
-        self.position_z.setFixedWidth(80)
-        layout.addWidget(self.position_z)
-        return
-
-    def go_to_connect(self, fn):
-        self.go_to_button.clicked.connect(
-            lambda: fn([self.position_x, self.position_y, self.position_z])
-        )
-        return
-
-    def put_position_connect(self, fn):
-        self.put_button.clicked.connect(
-            lambda: fn([self.position_x, self.position_y, self.position_z])
-        )
-        return
-
-    def get_position_float(self) -> list[float | None]:
-        fields = [self.position_x, self.position_y, self.position_z]
-        xyz_str = [field.text() for field in fields]
-
-        return [
-            float(xyz_str[i]) if is_float(xyz_str[i]) else None
-            for i in range(len(xyz_str))
-        ]
-
-    def get_position_str(self) -> tuple[str, str, str]:
-        fields = [self.position_x, self.position_y, self.position_z]
-        xyz_str = [field.text() for field in fields]
-
-        return xyz_str
-
-    def set_position_float(
-        self, pos: tuple[float | None, float | None, float | None]
-    ) -> None:
-        fields = [self.position_x, self.position_y, self.position_z]
-        for i, field in enumerate(fields):
-            if pos[i] is not None:
-                field.setText(str(pos[i]))
-        return
-
-    def set_position_str(self, pos: tuple[str, str, str]) -> None:
-        fields = [self.position_x, self.position_y, self.position_z]
-        for i, field in enumerate(fields):
-            field.setText(pos[i])
         return
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.ridge_period = 0.15
-        self.ridge_width = 0.1
-        self.ridge_length = 2.0
-        self.ridge_length_to_period_ratio = self.ridge_length / self.ridge_period
-        self.number_of_ridges: int = 62
-        self.ridges_sum_length = self.number_of_ridges * self.ridge_period
+        self.apparatus: Apparatus | None = None
 
-        self.gcode_sender = GCodeSenter(DEVICES[0])
-
-        self.camera = Camera(4, height=1000)
-        self.camera.create_capture()
-
-        self.image_crop_size = np.array([1000, 1000])
-        self.ridge_model_path = path.join(
-            "nn-models", "obb-ridge-detection", "best1.pt"
-        )
-        self.ridge_model = RidgeDetectionModel(self.ridge_model_path)
-
-        self.position_widgets_n: int = 4
-
-        self.first_ridge_center_pt: np.ndarray | None = None
-        self.last_ridge_center_pt: np.ndarray | None = None
-
-        self.zond_in_frame_coordinates: np.ndarray = self.image_crop_size/2
-
-        self.pixels_to_mm_coeff: float | None = None
+        self.threadpool = QThreadPool()
+        thread_count = self.threadpool.maxThreadCount()
+        print(f"Multithreading with maximum {thread_count} threads")
 
         self.setup_layout()
         return
@@ -353,22 +137,35 @@ class MainWindow(QMainWindow):
 
         splitter = QSplitter(Qt.Horizontal)
 
+        ######
+
         controls_widget = QWidget()
         controls_layout = QVBoxLayout()
 
-        self.widget_x = AxisControlWidget("X", self.gcode_sender)
+        self.widget_x = AxisControlWidget("X", self.apparatus)
         controls_layout.addWidget(self.widget_x)
+        self.widget_x.set_target_refresh_callback_function(
+            self.refresh_positions_callback
+        )
 
-        self.widget_y = AxisControlWidget("Y", self.gcode_sender)
+        self.widget_y = AxisControlWidget("Y", self.apparatus)
         controls_layout.addWidget(self.widget_y)
+        self.widget_y.set_target_refresh_callback_function(
+            self.refresh_positions_callback
+        )
 
-        self.widget_z = AxisControlWidget("Z", self.gcode_sender)
+        self.widget_z = AxisControlWidget("Z", self.apparatus)
         controls_layout.addWidget(self.widget_z)
+        self.widget_z.set_target_refresh_callback_function(
+            self.refresh_positions_callback
+        )
+
+        ###
 
         btn_layout = QHBoxLayout()
 
         self.connect_btn = QPushButton("Connect")
-        self.connect_btn.clicked.connect(self.connect_device)
+        self.connect_btn.clicked.connect(self.connect_apparatus_callback)
         btn_layout.addWidget(self.connect_btn)
 
         self.home_btn = QPushButton("Home All")
@@ -386,64 +183,48 @@ class MainWindow(QMainWindow):
 
         controls_widget.setLayout(controls_layout)
 
-        self.position_widgets: list[PositionWidget] = []
-        for i in range(self.position_widgets_n):
-            widget = PositionWidget(index=i)
-            self.position_widgets.append(widget)
-            widget.go_to_connect(self.go_to_callback)
-            widget.put_position_connect(self.put_position_callback)
-
-            controls_layout.addWidget(widget)
-
-        save_open_positions_layout = QHBoxLayout()
-        self.save_positons = QPushButton("Save positions")
-        self.save_positons.clicked.connect(self.save_positions_callback)
-        self.open_positons = QPushButton("Open positions")
-        self.open_positons.clicked.connect(self.open_positions_callback)
-        save_open_positions_layout.addWidget(self.save_positons)
-        save_open_positions_layout.addWidget(self.open_positons)
-        controls_layout.addLayout(save_open_positions_layout)
-
-        apply_layout = QHBoxLayout()
-        self.apply_btn = QPushButton("Apply")
-        self.apply_btn.clicked.connect(self.apply_callback)
-        self.move_next_btn = QPushButton("Next")
-        self.move_next_btn.clicked.connect(self.move_next_callback)
-        self.move_prev_btn = QPushButton("Prev")
-        self.move_prev_btn.clicked.connect(self.move_prev_callback)
-        apply_layout.addWidget(self.apply_btn)
-        apply_layout.addWidget(self.move_next_btn)
-        apply_layout.addWidget(self.move_prev_btn)
-        controls_layout.addLayout(apply_layout)
-
         self.draw_obb_checkbox = QCheckBox("Draw OBB")
         controls_layout.addWidget(self.draw_obb_checkbox)
 
-        self.get_chip_positions_btn = QPushButton("Get chip positions")
-        self.get_chip_positions_btn.clicked.connect(self.get_chip_positions_callback)
-        controls_layout.addWidget(self.get_chip_positions_btn)
+        ###
+
+        btn_layout = QHBoxLayout()
+
+        self.deduce_last_ridge_position_btn = QPushButton("Zond is on the first ridge")
+        self.deduce_last_ridge_position_btn.clicked.connect(self.deduce_last_ridge_position_callback)
+        btn_layout.addWidget(self.deduce_last_ridge_position_btn)
+
+        self.autoapply_btn = QPushButton("Run")
+        self.autoapply_btn.clicked.connect(self.run_btn_callback)
+        btn_layout.addWidget(self.autoapply_btn)
+
+        btn_layout.addStretch()
+        controls_layout.addLayout(btn_layout)
+
+        ###
 
         go_to_ridge_layout = QHBoxLayout()
         self.ridge_index_edit = QLineEdit()
         self.go_to_ridge_btn = QPushButton("Go to ridge")
-        self.go_to_ridge_btn.clicked.connect(self.go_to_ridge_callback)
+        # self.go_to_ridge_btn.clicked.connect(self.go_to_ridge_callback)
         go_to_ridge_layout.addWidget(self.ridge_index_edit)
         go_to_ridge_layout.addWidget(self.go_to_ridge_btn)
         controls_layout.addLayout(go_to_ridge_layout)
 
         controls_layout.addStretch()
 
+        ######
+
         camera_widget = QWidget()
         camera_layout = QVBoxLayout()
         camera_widget.setLayout(camera_layout)
 
-        self.camera_feed = QLabel("Camera")
-        self.camera_feed.setAlignment(Qt.AlignCenter)
-        camera_layout.addWidget(self.camera_feed)
+        self.camera_feed_widget = QLabel("Camera")
+        self.camera_feed_widget.setAlignment(Qt.AlignCenter)
+        camera_layout.addWidget(self.camera_feed_widget)
 
         self.camera_timer = QTimer()
-        self.camera_timer.timeout.connect(self.update_camera)
-        self.camera_timer.start(100)
+        self.camera_timer.timeout.connect(self.update_camera_callback)
 
         splitter.addWidget(controls_widget)
         splitter.addWidget(camera_widget)
@@ -452,73 +233,32 @@ class MainWindow(QMainWindow):
         return
 
     def home_all(self):
-        self.gcode_sender.home()
+        self.apparatus.home()
         self.refresh_positions_callback()
         return
 
     def refresh_positions(self):
-        x, y, z = self.gcode_sender.get_pos()
+        x, y, z = self.apparatus.get_current_position()
         self.widget_x.target_edit.setText(f"{x:.2f}")
         self.widget_y.target_edit.setText(f"{y:.2f}")
         self.widget_z.target_edit.setText(f"{z:.2f}")
         return
 
-    def connect_device(self):
+    def connect_apparatus(self) -> None:
         try:
-            self.gcode_sender.connect()
-            self.gcode_sender.send_command(
-                SomeGCodes.SET_STEPS_PER_UNIT_GCODE, need_to_await=False
-            )
-            self.gcode_sender.send_command(
-                SomeGCodes.SET_CURRENT_LIMIT_GCODE, need_to_await=False
-            )
-            self.gcode_sender.send_command(
-                SomeGCodes.SET_MAX_FEEDRATE_GCODE, need_to_await=False
-            )
-            self.gcode_sender.send_command(
-                SomeGCodes.SET_ACCELERATION_GCODE, need_to_await=False
-            )
-            self.gcode_sender.send_command(
-                SomeGCodes.SET_MICROSTEPPING_GCODE, need_to_await=False
-            )
-
-            self.connect_btn.setEnabled(False)
-            self.home_btn.setEnabled(True)
-            self.refresh_btn.setEnabled(True)
-
-            QMessageBox.information(self, "Success", "Device connected successfully")
+            self.apparatus = Apparatus()
+            self.widget_x.set_apparatus(self.apparatus)
+            self.widget_y.set_apparatus(self.apparatus)
+            self.widget_z.set_apparatus(self.apparatus)
+            self.camera_timer.start(100)
         except Exception as e:
             QMessageBox.critical(self, "Connection Error", str(e))
         return
 
-    def go_to_callback(self, fields_source: list[QLineEdit]) -> None:
-        fields_put = [
-            self.widget_x.target_edit,
-            self.widget_y.target_edit,
-            self.widget_z.target_edit,
-        ]
-        widgets = [self.widget_x, self.widget_y, self.widget_z]
-        for i, [field_put, field_source] in enumerate(zip(fields_put, fields_source)):
-            value_str = field_source.text()
-            if value_str != "":
-                field_put.setText(value_str)
-                widgets[i].move_to_target()
-        return
-
-    def put_position_callback(self, fields_to_put: list[QLineEdit]) -> None:
-        fields_source = [
-            self.widget_x.target_edit,
-            self.widget_y.target_edit,
-            self.widget_z.target_edit,
-        ]
-        for field_put, field_source in zip(fields_to_put, fields_source):
-            value_str = field_source.text()
-            if value_str != "":
-                field_put.setText(value_str)
-        return
-
-    def connect_device_callback(self):
-        self.connect_device()
+    def connect_apparatus_callback(self):
+        self.connect_apparatus()
+        self.home_btn.setEnabled(True)
+        self.refresh_btn.setEnabled(True)
         return
 
     def home_all_callback(self):
@@ -529,125 +269,19 @@ class MainWindow(QMainWindow):
         self.refresh_positions()
         return
 
-    def apply_callback(self):
-        x, y, z = self.gcode_sender.get_pos()
-        self.widget_y.target_edit.setText(f"{y+1:.2f}")
-        self.widget_y.move_to_target()
-        self.widget_y.target_edit.setText(f"{y:.2f}")
-        self.widget_y.move_to_target()
-        return
+    def update_camera_callback(self) -> None:
 
-    def move_next_callback(self):
-        x, y, z = self.gcode_sender.get_pos()
-        self.widget_z.target_edit.setText(f"{z-0.5:.2f}")
-        self.widget_z.move_to_target()
-        self.widget_x.target_edit.setText(f"{x+0.15:.2f}")
-        self.widget_x.move_to_target()
-        self.widget_z.target_edit.setText(f"{z:.2f}")
-        self.widget_z.move_to_target()
-        return
+        if self.apparatus is None:
+            raise Exception("Camera not connected")
 
-    def move_prev_callback(self):
-        x, y, z = self.gcode_sender.get_pos()
-        self.widget_z.target_edit.setText(f"{z-0.5:.2f}")
-        self.widget_z.move_to_target()
-        self.widget_x.target_edit.setText(f"{x-0.15:.2f}")
-        self.widget_x.move_to_target()
-        self.widget_z.target_edit.setText(f"{z:.2f}")
-        self.widget_z.move_to_target()
-        return
-
-    def save_positions_callback(self):
-        file_path, selected_filter = QFileDialog.getSaveFileName(
-            self, "Save Positions", getcwd(), "Text Files (*.txt);;All Files (*)"
+        framedata = self.apparatus.get_camera_frame(
+            False,
+            self.draw_obb_checkbox.isChecked(),
         )
-
-        if file_path:
-            if not file_path.endswith(".txt"):
-                file_path += ".txt"
-
-            strings: list[str] = []
-            for i in range(self.position_widgets_n):
-                xyz = self.position_widgets[i].get_position_float()
-                xyz_str = [str(xyz[i]) if xyz[i] is not None else "" for i in range(3)]
-                xyz_str_joined = " ".join(xyz_str)
-                strings.append(xyz_str_joined)
-
-            try:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    for string in strings:
-                        f.write(f"{string}\n")
-            except Exception as e:
-                QMessageBox.critical(self, "Error saving file", str(e))
-
-    def open_positions_callback(self):
-        file_path, selected_filter = QFileDialog.getOpenFileName(
-            self, "Open Positions", getcwd(), "Text Files (*.txt);;All Files (*)"
-        )
-
-        if file_path:
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    contents = f.readlines()
-            except Exception as e:
-                QMessageBox.critical(self, "Error opening file", str(e))
-
-        xyz_str = [contents[i].split(" ") for i in range(len(contents))]
-
-        for i in range(min([self.position_widgets_n, len(xyz_str)])):
-            self.position_widgets[i].set_position_str(xyz_str[i])
-
-        return
-
-    def update_camera(self):
-        # Read camera buffer
-        ret, frame = self.camera.capture.read()
-
-        center_x = frame.shape[1] // 2
-        center_y = frame.shape[0] // 2
-
-        cropped_frame = frame[
-            center_y
-            - self.image_crop_size[1] // 2 : center_y
-            + self.image_crop_size[1] // 2,
-            center_x
-            - self.image_crop_size[0] // 2 : center_x
-            + self.image_crop_size[0] // 2,
-        ]
-
-        # Detect rectangles
-        obbs, confidences = [], []
-        if self.draw_obb_checkbox.isChecked():
-            obbs, confidences = self.ridge_model.run_detection(cropped_frame)
-
-        if self.draw_obb_checkbox.isChecked() and obbs:
-            # Draw rectangles
-            for obb in obbs:
-                xs = obb[:, 0].tolist()
-                ys = obb[:, 1].tolist()
-                xs.append(xs[0])
-                ys.append(ys[0])
-                for i in range(len(xs) - 1):
-                    cv2.line(
-                        img=cropped_frame,
-                        pt1=(int(xs[i]), int(ys[i])),
-                        pt2=(int(xs[i + 1]), int(ys[i + 1])),
-                        color=(255, 0, 0),
-                        thickness=2,
-                    )
-
-            first_ridge_center, last_ridge_center, _ = self.analyze_obbs(obbs)
-
-            cv2.line(
-                img=cropped_frame,
-                pt1=[int(aaa) for aaa in first_ridge_center.tolist()],
-                pt2=[int(aaa) for aaa in last_ridge_center.tolist()],
-                color=(0, 255, 0),
-                thickness=2,
-            )
+        frame, first_ridge_center, last_ridge_center, ridge_period_in_pixels = framedata
 
         # Convert to RGB
-        rgb_image = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB)
+        rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
 
@@ -660,135 +294,27 @@ class MainWindow(QMainWindow):
         )
 
         scaled_pixmap = QPixmap.fromImage(qt_image).scaled(
-            self.camera_feed.size(),
+            self.camera_feed_widget.size(),
             Qt.KeepAspectRatio,
             Qt.SmoothTransformation,
         )
 
-        self.camera_feed.setPixmap(scaled_pixmap)
+        self.camera_feed_widget.setPixmap(scaled_pixmap)
         return
     
-    def analyze_obbs(self, obbs):
-        # Calculate mean rotation angle of each obb
-        angles = [RidgeDetectionModel.get_box_angle(obb) for obb in obbs]
-        angle_mean = np.mean(angles)
-
-        # Rotate obbs to align with coordinate system
-        rotated_obbs = [
-            RidgeDetectionModel.rotate_tensor(obb, -angle_mean) for obb in obbs
-        ]
-
-        ridge_short_sides = [
-            RidgeDetectionModel.get_box_short_side_points(obb)
-            for obb in rotated_obbs
-        ]
-        ridge_long_sides = [
-            RidgeDetectionModel.get_box_long_side_points(obb)
-            for obb in rotated_obbs
-        ]
-        ridge_centers_x = [
-            RidgeDetectionModel.get_box_center(obb)[0] for obb in rotated_obbs
-        ]
-
-        # Calculate distances between ridge centers
-        # There can be missing ridges, so there is a chance to see a value equal 2*period or 3*period
-        ridge_periods_pixel = [
-            abs(ridge_centers_x[i] - ridge_centers_x[i + 1])
-            for i in range(len(ridge_centers_x) - 1)
-        ]
-        ridge_period_mean_pixel = np.median(ridge_periods_pixel)
-
-        ridge_length_pixel = (
-            self.ridge_length_to_period_ratio * ridge_period_mean_pixel
-        )
-
-        ridge_center_coordinate_mean = np.mean(
-            [np.mean([y1, y2]) for x1, y1, x2, y2 in ridge_long_sides]
-        )
-
-        first_box = np.array(rotated_obbs[0])
-        last_box = np.array(rotated_obbs[-1])
-
-        first_ridge_approx_center = np.mean(first_box, axis=0)
-        first_ridge_avg_center = np.array([first_ridge_approx_center[0], ridge_center_coordinate_mean])
-
-        last_ridge_approx_center = np.mean(last_box, axis=0)
-        last_ridge_avg_center = np.array([last_ridge_approx_center[0], ridge_center_coordinate_mean])
-
-        # Rotate back to original coordinate system
-        first_ridge_avg_center = RidgeDetectionModel.rotate_vector(first_ridge_avg_center, angle_mean)
-        last_ridge_avg_center = RidgeDetectionModel.rotate_vector(last_ridge_avg_center, angle_mean)
-
-        return first_ridge_avg_center, last_ridge_avg_center, ridge_period_mean_pixel
-    
-    def get_chip_positions_callback(self):
-        # Get first ridge position
-        first_edge_found = False
-        last_edge_found = False
-        while not first_edge_found and not last_edge_found:
-            ret, frame = self.camera.capture.read()
-
-            center_x = frame.shape[1] // 2
-            center_y = frame.shape[0] // 2
-
-            cropped_frame = frame[
-                center_y
-                - self.image_crop_size[1] // 2 : center_y
-                + self.image_crop_size[1] // 2,
-                center_x
-                - self.image_crop_size[0] // 2 : center_x
-                + self.image_crop_size[0] // 2,
-            ]
-
-            obbs, confidences = self.ridge_model.run_detection(cropped_frame)
-            if not first_edge_found:
-                if not obbs:
-                    x, y, z = self.gcode_sender.get_pos()
-                    self.widget_x.target_edit.setText(f"{x+0.3:.2f}")
-                    self.widget_x.move_to_target()
-                    sleep(1)
-                    continue
-
-                first_obb_center, last_obb_center, period_pixels = self.analyze_obbs(obbs)
-                if self.image_crop_size[1]/4 < first_obb_center[0] and first_obb_center[0] < self.image_crop_size[1]*3/4:
-
-                    if self.pixels_to_mm_coeff is None:
-                        self.pixels_to_mm_coeff = self.ridge_period / period_pixels
-                    
-                    xy_move_mm = (first_obb_center - self.zond_in_frame_coordinates)*self.pixels_to_mm_coeff
-                    x_move_mm = xy_move_mm[0]
-                    y_move_mm = xy_move_mm[1]
-
-                    x, y, z = self.gcode_sender.get_pos()
-                    self.widget_x.target_edit.setText(f"{x-x_move_mm:.2f}")
-                    self.widget_x.move_to_target()
-                    self.widget_y.target_edit.setText(f"{y-y_move_mm:.2f}")
-                    self.widget_y.move_to_target()
-                    sleep(1)
-
-                    first_edge_found = True
-                    last_edge_found = True
-                
-                elif self.image_crop_size[1]/4 > first_obb_center[0]:
-                    x, y, z = self.gcode_sender.get_pos()
-                    self.widget_x.target_edit.setText(f"{x-0.15:.2f}")
-                    self.widget_x.move_to_target()
-                    sleep(1)
-                    continue
-                elif first_obb_center[0] > self.image_crop_size[1]*3/4:
-                    x, y, z = self.gcode_sender.get_pos()
-                    self.widget_x.target_edit.setText(f"{x+0.15:.2f}")
-                    self.widget_x.move_to_target()
-                    sleep(1)
-                    continue
-
+    def deduce_last_ridge_position_callback(self) -> None:
+        worker = Worker(self.apparatus.deduce_last_ridge_position)
+        self.threadpool.start(worker)
         return
-    
-    def go_to_ridge_callback(self):
+
+    def run_btn_callback(self) -> None:
+        worker = Worker(self.apparatus.run)
+        self.threadpool.start(worker)
         return
 
     def closeEvent(self, event):
-        self.gcode_sender.close()
+        if self.apparatus is not None:
+            self.apparatus.close()
         event.accept()
         return
 

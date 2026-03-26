@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.optimize as optimize
 import matplotlib.pyplot as plt
 from scipy import ndimage
 from PIL import Image
@@ -18,23 +19,44 @@ class FourierImageAnalyzer:
         self.is_horizontal = is_horizontal
         return
 
-    def analyze_periodic_pattern(
+    @staticmethod
+    def get_image_array(image_PIL: Image = None, image_path: str = None) -> np.ndarray:
+        if image_PIL is None and image_path is None:
+            raise Exception("Did not provide image nor image_path")
+        if image_PIL is not None and image_path is not None:
+            raise Exception("Either image nor image_path should be provided")
+
+        if image_PIL is not None:
+            img = image_PIL.convert("L")
+            img_array = np.array(img, dtype=float)
+
+        if image_path is not None:
+            img = Image.open(image_path).convert("L")
+            img_array = np.array(img, dtype=float)
+
+        return img_array
+
+    def extract_array(self, analize_band_center: int, analize_band_width: int):
+        if self.is_horizontal:
+            self.start_row = analize_band_center - analize_band_width // 2
+            self.end_row = self.start_row + analize_band_width
+
+            rows_section = self.image_array[self.start_row : self.end_row, :]
+            self.averaged_signal = np.mean(rows_section, axis=0)
+        else:
+            raise Exception("Not implemented")
+        return self.averaged_signal
+
+    def analyze_fourier(
         self,
         analize_band_center: int,
         analize_band_width: int,
         known_period: float,
     ) -> Dict:
 
-        if self.is_horizontal:
-            self.start_row = analize_band_center - analize_band_width // 2
-            self.end_row = self.start_row + analize_band_width
+        self.extract_array(analize_band_center, analize_band_width)
 
-            rows_section = self.image_array[self.start_row : self.end_row, :]
-            averaged_signal = np.mean(rows_section, axis=0)
-        else:
-            raise Exception("Not implemented")
-
-        signal_no_dc = averaged_signal - np.mean(averaged_signal)
+        signal_no_dc = self.averaged_signal - np.mean(self.averaged_signal)
 
         window = np.hanning(self.width)
         windowed_signal = signal_no_dc * window
@@ -69,7 +91,6 @@ class FourierImageAnalyzer:
         self.spatial_period_pixels = spatial_period_pixels
         self.phase_shift_pixels = phase_shift_pixels
         self.dominant_frequency_cycles_per_pixel = abs(dominant_freq)
-        self.averaged_signal = averaged_signal
         self.fft_magnitude = magnitude
         self.fft_frequencies = frequencies
 
@@ -80,22 +101,27 @@ class FourierImageAnalyzer:
 
         return
 
-    @staticmethod
-    def get_image_array(image_PIL: Image = None, image_path: str = None) -> np.ndarray:
-        if image_PIL is None and image_path is None:
-            raise Exception("Did not provide image nor image_path")
-        if image_PIL is not None and image_path is not None:
-            raise Exception("Either image nor image_path should be provided")
+    def signal_sin_mask(
+        self, spatial_period: float, spatial_phase_shift: float
+    ) -> float:
+        spatial_array = np.arange(len(self.averaged_signal))
+        sin_mask = np.sin(
+            2 * np.pi / spatial_period * spatial_array + 2 * np.pi * spatial_phase_shift
+        )
+        signal_no_dc = self.averaged_signal - np.mean(self.averaged_signal)
+        signal_masked = np.convolve(signal_no_dc, sin_mask, mode="same")
+        return np.mean(abs(signal_masked))
 
-        if image_PIL is not None:
-            img = image_PIL.convert("L")
-            img_array = np.array(img, dtype=float)
+    def sin_mask_optimize(self):
+        x0 = [self.spatial_period_pixels, self.phase_shift_pixels]
+        res = optimize.minimize(
+            lambda x: -self.signal_sin_mask(*x),
+            x0,
+            method="nelder-mead",
+            options={"xatol": 1e-4, "disp": True},
+        )
 
-        if image_path is not None:
-            img = Image.open(image_path).convert("L")
-            img_array = np.array(img, dtype=float)
-
-        return img_array
+        return res.x
 
     def visualize_matplotlib(self):
         # Create visualization
@@ -117,12 +143,13 @@ class FourierImageAnalyzer:
             x_pixels,
             (
                 np.sin(
-                    1/self.spatial_period_pixels * 2 * np.pi * x_pixels
+                    1 / self.spatial_period_pixels * 2 * np.pi * x_pixels
                     + self.phase_shift_pixels * 2 * np.pi
                 )
                 + 1
             )
-            * np.max(self.averaged_signal)/2,
+            * np.max(self.averaged_signal)
+            / 2,
             "g-",
             linewidth=1,
         )
@@ -166,7 +193,7 @@ def main_single_run():
     analyzer = FourierImageAnalyzer(
         image_path=image_path,
     )
-    analyzer.analyze_periodic_pattern(
+    analyzer.analyze_fourier(
         analize_band_center=1000,
         analize_band_width=band_width,
         known_period=known_pattern_period,
@@ -188,61 +215,74 @@ def main_single_run():
 def main_single_run2():
     directory = "images/home_accuracy"
     directory = "images/home_accuracy_ring_light"
-    filename = os.listdir(directory)[0]
+    # directory = "images"
+    filename = os.listdir(directory)[-1]
     image_path = f"{directory}/{filename}"
+
+    row_1 = 300
+    row_2 = 1600
+
+    image_orig = Image.open(image_path)
+    image_flip = Image.open(image_path).transpose(Image.FLIP_LEFT_RIGHT)
 
     known_pattern_period = 0.15  # mm
     band_width = 100
 
     analyzer1 = FourierImageAnalyzer(
-        image_path=image_path,
-    )
-    analyzer1.analyze_periodic_pattern(
-        analize_band_center=500,
-        analize_band_width=band_width,
-        known_period=known_pattern_period,
+        image_PIL=image_orig,
     )
 
     analyzer2 = FourierImageAnalyzer(
-        image_path=image_path,
+        image_PIL=image_flip,
     )
-    analyzer2.analyze_periodic_pattern(
-        analize_band_center=1500,
+
+    analyzer1.analyze_fourier(
+        analize_band_center=row_1,
         analize_band_width=band_width,
         known_period=known_pattern_period,
     )
+    analyzer2.analyze_fourier(
+        analize_band_center=row_2,
+        analize_band_width=band_width,
+        known_period=known_pattern_period,
+    )
+    
+    if True:
+        T_1, phi_1 = analyzer1.sin_mask_optimize()
+        T_2, phi_2 = analyzer2.sin_mask_optimize()
+    else:
+        T_1, phi_1 = analyzer1.spatial_period_pixels, analyzer1.phase_shift_pixels
+        T_2, phi_2 = analyzer2.spatial_period_pixels, analyzer2.phase_shift_pixels
 
-    fig, axes = plt.subplots(1, 1, figsize=(12, 10))
+    if phi_2 - phi_1 > np.mean([T_1, T_2])/2:
+        phi_2 -= T_2
+    elif - phi_2 + phi_1 > np.mean([T_1, T_2])/2:
+        phi_1 -= T_1
+
+    fig, axis = plt.subplots(1, 1, figsize=(12, 10))
 
     # Plot original image with averaged rows highlighted
-    axes.imshow(analyzer1.img_array, cmap="gray")
-    axes.axhline(y=analyzer1.start_row, color="r", linestyle="--", alpha=0.5)
-    axes.axhline(y=analyzer2.start_row, color="r", linestyle="--", alpha=0.5)
-    axes.axhline(y=analyzer1.end_row - 1, color="r", linestyle="--", alpha=0.5)
-    axes.axhline(y=analyzer2.end_row - 1, color="r", linestyle="--", alpha=0.5)
+    axis.imshow(analyzer1.img_array, cmap="gray")
+    axis.axhline(y=analyzer1.start_row, color="r", linestyle="--", alpha=0.5)
+    axis.axhline(y=analyzer2.start_row, color="r", linestyle="--", alpha=0.5)
+    axis.axhline(y=analyzer1.end_row - 1, color="r", linestyle="--", alpha=0.5)
+    axis.axhline(y=analyzer2.end_row - 1, color="r", linestyle="--", alpha=0.5)
 
-    ridges_offset_n = 0
+    ridge_n = 0
     while (
-        ridges_offset_n * analyzer1.spatial_period_pixels < analyzer1.width
-        and ridges_offset_n * analyzer2.spatial_period_pixels < analyzer2.width
+        ridge_n * T_1 + phi_1 < analyzer1.width
+        and ridge_n * T_2 + phi_2 < analyzer1.width
     ):
-        axes.axline(
-            (
-                analyzer1.phase_shift_pixels
-                + analyzer1.spatial_period_pixels * ridges_offset_n,
-                500,
-            ),
-            (
-                analyzer2.phase_shift_pixels
-                + analyzer2.spatial_period_pixels * ridges_offset_n,
-                1500,
-            ),
-            color="black",
+        axis.axline(
+            (ridge_n * T_1 + phi_1, row_1),
+            (ridge_n * T_2 + phi_2, row_2),
+            color="b",
             linestyle="--",
             alpha=0.5,
         )
-        ridges_offset_n += 1
-    axes.axis("off")
+        ridge_n += 1
+
+    axis.axis("off")
 
     plt.tight_layout()
     plt.show()
@@ -266,9 +306,7 @@ def main_multiple_run():
                 analize_band_width=band_width,
                 is_horizontal=True,
             )
-            analyzer.analyze_periodic_pattern(
-                image_path=image_path, visualize_matplotlib=False
-            )
+            analyzer.analyze_fourier(image_path=image_path, visualize_matplotlib=False)
 
             periods.append(analyzer.spatial_period_pixels)
             phase_shifts.append(analyzer.phase_shift_mm)
