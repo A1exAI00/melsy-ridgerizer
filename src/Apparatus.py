@@ -406,7 +406,7 @@ class Apparatus:
         if not self.is_ridge_index_valid(nth):
             raise Exception(f"Incorrent index: {nth} ∉ [1, {self.number_of_ridges}]")
 
-        N_travels = 50
+        N_travels = 10
         N_frame_measurements = 5
 
         measurements_negative = []
@@ -460,9 +460,38 @@ class Apparatus:
                 except:
                     pass
 
-        print(f"{measurements_negative=}")
-        print()
-        print(f"{measurements_positive=}")
+        # print(f"{measurements_negative=}")
+        # print()
+        # print(f"{measurements_positive=}")
+
+        first_ridge_negative_x = []
+        first_ridge_positive_x = []
+        periods = [meas[2] for meas in measurements_negative]
+        period_mean = float(np.mean(periods))
+
+        for meas in measurements_negative:
+            first, last, period = meas
+            first_ridge_negative_x.append(first[0])
+        for meas in measurements_positive:
+            first, last, period = meas
+            first_ridge_positive_x.append(first[0])
+
+        first_ridge_negative_x_mean = float(np.median(first_ridge_negative_x))
+        first_ridge_positive_x_mean = float(np.median(first_ridge_positive_x))
+        first_ridge_negative_x_std = float(np.std(first_ridge_negative_x))
+        first_ridge_positive_x_std = float(np.std(first_ridge_positive_x))
+
+        pixels_per_mm = period_mean / 0.15
+
+        diff_pixels = float(abs(first_ridge_negative_x_mean - first_ridge_positive_x_mean))
+        diff_mm = diff_pixels / pixels_per_mm
+
+        first_ridge_negative_x_std_mm = first_ridge_negative_x_std / pixels_per_mm
+        first_ridge_positive_x_std_mm = first_ridge_positive_x_std / pixels_per_mm
+
+        print(f"{diff_mm=}")
+        print(f"{first_ridge_negative_x_std_mm=}")
+        print(f"{first_ridge_positive_x_std_mm=}")
 
         return (measurements_negative, measurements_positive)
 

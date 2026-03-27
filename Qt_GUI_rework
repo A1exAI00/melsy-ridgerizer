@@ -231,10 +231,8 @@ class MainWindow(QMainWindow):
         controls_layout.addLayout(go_to_ridge_layout)
 
         measure_backlask_layout = QHBoxLayout()
-        self.measure_backlask_edit = QLineEdit()
-        self.measure_backlask_btn = QPushButton("Measure basklash")
+        self.measure_backlask_btn = QPushButton("Measure basklash on the first ridge")
         self.measure_backlask_btn.clicked.connect(self.measure_backlask_callback)
-        measure_backlask_layout.addWidget(self.measure_backlask_edit)
         measure_backlask_layout.addWidget(self.measure_backlask_btn)
         controls_layout.addLayout(measure_backlask_layout)
 
@@ -346,8 +344,7 @@ class MainWindow(QMainWindow):
         return
     
     def measure_backlask_callback(self) -> None:
-        nth = int(self.measure_backlask_edit.text())
-        worker = Worker(self.apparatus.measure_basklash, nth)
+        worker = Worker(self.apparatus.measure_basklash, 1)
         self.threadpool.start(worker)
         return
     
