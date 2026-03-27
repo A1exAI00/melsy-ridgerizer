@@ -258,7 +258,8 @@ class MainWindow(QMainWindow):
         return
 
     def home_all(self):
-        self.apparatus.home()
+        worker = Worker(self.apparatus.home)
+        self.threadpool.start(worker)
         self.refresh_positions_callback()
         return
 
