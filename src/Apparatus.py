@@ -311,11 +311,11 @@ class Apparatus:
 
     def is_ridge_index_valid(self, nth: int) -> bool:
         return not (nth < 1 or nth > self.number_of_ridges)
-    
+
     def get_nth_ridge_center(self, nth: int) -> np.ndarray:
         if not self.is_ridge_index_valid(nth):
             raise Exception(f"Incorrent index: {nth} ∉ [1, {self.number_of_ridges}]")
-        
+
         first = np.array(list(self.first_ridge_center_coordinates_mm))
         last = np.array(list(self.last_ridge_center_coordinates_mm))
 
