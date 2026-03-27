@@ -26,7 +26,9 @@ class Apparatus:
         # Connect external devices
         self.gcode_sender = self.connect_gcode_sender()
 
-        self.camera = Camera(CameraConfig(index=4, width=CAMERA_MAX_WIDTH, height=1000, buffer_size=1))
+        self.camera = Camera(
+            CameraConfig(index=4, width=CAMERA_MAX_WIDTH, height=1000, buffer_size=1)
+        )
         self.camera.create_capture()
 
         self.target_position = self.get_current_position()
