@@ -1,27 +1,27 @@
 from os import path
+from time import sleep
+
 import numpy as np
 import cv2
-from time import sleep
 
 from src.Camera import Camera, CAMERA_MAX_HEIGHT, CAMERA_MAX_WIDTH, CameraConfig
 from src.GCodeSender import GCodeSender, SomeGCodes, DEVICES
 from src.RidgeDetection import RidgeDetection
 from src.misc import *
+from src.ChipConfig import ChipConfig
+from src.ZondCalibrationConfig import ZondCalibrationConfig, ZondCalibrationConfigData
 
 
 class Apparatus:
     def __init__(self):
 
         # Chip configuration
-        # TODO change hardcoded variables to actual configs
-        self.ridge_period = 0.15
-        self.ridge_width = 0.1
-        self.ridge_length = 2.0
-        self.ridge_length_to_period_ratio = self.ridge_length / self.ridge_period
-        self.number_of_ridges: int = 62
-        self.ridges_sum_length = self.number_of_ridges * self.ridge_period
-        self.eutectic_apply_length = 1.0
-        self.safe_height_above_ridge = 1.0
+        chip_config_path = path.join("configs", "chip_config_default.yaml")
+        self.chip_config: ChipConfig = ChipConfig(chip_config_path)
+
+        # Zond configuration
+        zond_config_path = path.join("configs", "zond_calibration.yaml")
+        self.zond_config: ZondCalibrationConfig = ZondCalibrationConfig(zond_config_path)
 
         # Connect external devices
         self.gcode_sender = self.connect_gcode_sender()
@@ -197,7 +197,9 @@ class Apparatus:
         ]
         ridge_period_mean_pixel = np.median(ridge_periods_pixel)
 
-        ridge_length_pixel = self.ridge_length_to_period_ratio * ridge_period_mean_pixel
+        ridge_length_pixel = (
+            self.chip_config.ridge_length_to_period_ratio * ridge_period_mean_pixel
+        )
 
         ridge_center_coordinate_mean = np.mean(
             [np.mean([y1, y2]) for x1, y1, x2, y2 in ridge_long_sides]
@@ -240,7 +242,9 @@ class Apparatus:
         self.save_first_ridge_center()
 
         # Move to a safe height right above the ridge
-        self.set_terget_reletive_to_current([0.0, 0.0, -self.safe_height_above_ridge])
+        self.set_terget_reletive_to_current(
+            [0.0, 0.0, -self.chip_config.safe_z_height_above_ridge]
+        )
         self.move_to_target_position(need_to_await=True)
 
         # Move out of the frame
@@ -258,7 +262,7 @@ class Apparatus:
 
         # Save pixels per mm if it is not measured
         if self.pixels_per_mm_coeff is None:
-            self.pixels_per_mm_coeff = period1 / self.ridge_period
+            self.pixels_per_mm_coeff = period1 / self.chip_config.ridge_period
 
         # Some linear algebra
         vec_fl = last_on_frame1 - first_on_frame1
@@ -268,7 +272,7 @@ class Apparatus:
         # Move to other end
         self.set_terget_reletive_to_current(
             [
-                vec_one_ridge[0] * self.number_of_ridges / self.pixels_per_mm_coeff,
+                self.chip_config.ridges_max_sum_length,
                 0.0,
                 0.0,
             ]
@@ -302,7 +306,9 @@ class Apparatus:
         self.move_to_target_position(need_to_await=True)
 
         # Move down from the safe height on the ridge
-        self.set_terget_reletive_to_current([0.0, 0.0, self.safe_height_above_ridge])
+        self.set_terget_reletive_to_current(
+            [0.0, 0.0, self.chip_config.safe_z_height_above_ridge]
+        )
         self.move_to_target_position(need_to_await=True)
 
         # Save last ridge position right under the zond
@@ -310,16 +316,20 @@ class Apparatus:
         return
 
     def is_ridge_index_valid(self, nth: int) -> bool:
-        return not (nth < 1 or nth > self.number_of_ridges)
+        return not (nth < 1 or nth > self.chip_config.number_of_ridges_max)
 
     def get_nth_ridge_center(self, nth: int) -> np.ndarray:
         if not self.is_ridge_index_valid(nth):
-            raise Exception(f"Incorrent index: {nth} ∉ [1, {self.number_of_ridges}]")
+            raise Exception(
+                f"Incorrent index: {nth} ∉ [1, {self.chip_config.number_of_ridges_max}]"
+            )
 
         first = np.array(list(self.first_ridge_center_coordinates_mm))
         last = np.array(list(self.last_ridge_center_coordinates_mm))
 
-        number_of_ridges = int(round(np.linalg.norm(last - first) / self.ridge_period))
+        number_of_ridges = int(
+            round(np.linalg.norm(last - first) / self.chip_config.ridge_period)
+        )
 
         # Ridge in question
         ridge = first + (last - first) * (nth - 1) / number_of_ridges
@@ -350,7 +360,7 @@ class Apparatus:
             # Move to a safe height right above the ridge
             self.set_target_position(center.tolist())
             self.set_terget_reletive_to_current(
-                [0.0, 0.0, -self.safe_height_above_ridge]
+                [0.0, 0.0, -self.chip_config.safe_z_height_above_ridge]
             )
             self.move_to_target_position(need_to_await=True)
 
@@ -360,11 +370,17 @@ class Apparatus:
 
             # Move along the ridge back and forth to apply eutectic
             self.set_target_position(
-                (center + perp_unit_vector * self.eutectic_apply_length / 2).tolist()
+                (
+                    center
+                    + perp_unit_vector * self.chip_config.eutectic_apply_length / 2
+                ).tolist()
             )
             self.move_to_target_position(need_to_await=True)
             self.set_target_position(
-                (center - perp_unit_vector * self.eutectic_apply_length / 2).tolist()
+                (
+                    center
+                    - perp_unit_vector * self.chip_config.eutectic_apply_length / 2
+                ).tolist()
             )
             self.move_to_target_position(need_to_await=True)
 
@@ -375,14 +391,16 @@ class Apparatus:
             # Move to a safe height right above the ridge
             self.set_target_position(center.tolist())
             self.set_terget_reletive_to_current(
-                [0.0, 0.0, -self.safe_height_above_ridge]
+                [0.0, 0.0, -self.chip_config.safe_z_height_above_ridge]
             )
             self.move_to_target_position(need_to_await=True)
         return
 
     def set_target_to_nth_ridge_center(self, nth: int) -> None:
         if not self.is_ridge_index_valid(nth):
-            raise Exception(f"Incorrent index: {nth} ∉ [1, {self.number_of_ridges}]")
+            raise Exception(
+                f"Incorrent index: {nth} ∉ [1, {self.chip_config.number_of_ridges_max}]"
+            )
 
         ridge = self.get_nth_ridge_center(nth)
         self.set_target_position(ridge.tolist())
@@ -390,11 +408,15 @@ class Apparatus:
 
     def go_to_nth_ridge_center(self, nth: int) -> None:
         if not self.is_ridge_index_valid(nth):
-            raise Exception(f"Incorrent index: {nth} ∉ [1, {self.number_of_ridges}]")
+            raise Exception(
+                f"Incorrent index: {nth} ∉ [1, {self.chip_config.number_of_ridges_max}]"
+            )
 
         # Move to safe height above ridge
         self.set_target_to_nth_ridge_center(nth)
-        self.set_terget_reletive_to_current([0.0, 0.0, -self.safe_height_above_ridge])
+        self.set_terget_reletive_to_current(
+            [0.0, 0.0, -self.chip_config.safe_z_height_above_ridge]
+        )
         self.move_to_target_position()
 
         # Move on the ridge
@@ -404,7 +426,9 @@ class Apparatus:
 
     def measure_basklash(self, nth: int) -> None:
         if not self.is_ridge_index_valid(nth):
-            raise Exception(f"Incorrent index: {nth} ∉ [1, {self.number_of_ridges}]")
+            raise Exception(
+                f"Incorrent index: {nth} ∉ [1, {self.chip_config.number_of_ridges_max}]"
+            )
 
         N_travels = 10
         N_frame_measurements = 5
@@ -483,7 +507,9 @@ class Apparatus:
 
         pixels_per_mm = period_mean / 0.15
 
-        diff_pixels = float(abs(first_ridge_negative_x_mean - first_ridge_positive_x_mean))
+        diff_pixels = float(
+            abs(first_ridge_negative_x_mean - first_ridge_positive_x_mean)
+        )
         diff_mm = diff_pixels / pixels_per_mm
 
         first_ridge_negative_x_std_mm = first_ridge_negative_x_std / pixels_per_mm
@@ -494,6 +520,57 @@ class Apparatus:
         print(f"{first_ridge_positive_x_std_mm=}")
 
         return (measurements_negative, measurements_positive)
+
+    def calibrate_zond(self) -> None:
+
+        # Get current zond position
+        zond_pos = self.get_target_position()
+        zond_pos_x, zond_pos_y, _ = zond_pos
+
+        # Move zond out of the frame
+        self.set_terget_reletive_to_current([0.0, -2.0, 0.0])
+        self.move_to_target_position(need_to_await=True)
+
+        # Wait for image to settle after movement
+        sleep(1)
+
+        # Get first ridge center coordinate
+        counter, max_count = 1, 10
+        frame_got = False
+        while counter < max_count:
+            try:
+                frame, first, last, period = self.get_camera_frame(
+                    find_obbs=True, draw_obbs=False
+                )
+                frame_got = True
+                break
+            except Exception as e:
+                print(e)
+                counter += 1
+                continue
+
+        # Move zond back
+        self.set_terget_reletive_to_current([0.0, 2.0, 0.0])
+        self.move_to_target_position(need_to_await=True)
+
+        if not frame_got:
+            raise Exception("Could not get first ridge ")
+
+        first_ridge_center_x, first_ridge_center_y = first
+
+        # X coordinate in pixels, it is constant
+        # Y coordinate in mm is a function if Y coordinate in pixels
+        calibration_data = ZondCalibrationConfigData(
+            float(first_ridge_center_x),
+            float(first_ridge_center_y),
+            zond_pos_x,
+            zond_pos_y,
+        )
+
+        # Save calibration data
+        self.zond_config.save_same_path(calibration_data)
+
+        return
 
     def close(self) -> None:
         self.gcode_sender.close()

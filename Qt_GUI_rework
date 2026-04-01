@@ -210,7 +210,9 @@ class MainWindow(QMainWindow):
         btn_layout = QHBoxLayout()
 
         self.deduce_last_ridge_position_btn = QPushButton("Zond is on the first ridge")
-        self.deduce_last_ridge_position_btn.clicked.connect(self.deduce_last_ridge_position_callback)
+        self.deduce_last_ridge_position_btn.clicked.connect(
+            self.deduce_last_ridge_position_callback
+        )
         btn_layout.addWidget(self.deduce_last_ridge_position_btn)
 
         self.autoapply_btn = QPushButton("Run")
@@ -235,6 +237,12 @@ class MainWindow(QMainWindow):
         self.measure_backlask_btn.clicked.connect(self.measure_backlask_callback)
         measure_backlask_layout.addWidget(self.measure_backlask_btn)
         controls_layout.addLayout(measure_backlask_layout)
+
+        self.zond_calibration_btn = QPushButton(
+            "Save zond calibration (zond is on the first ridge)"
+        )
+        self.zond_calibration_btn.clicked.connect(self.zond_calibration_callback)
+        controls_layout.addWidget(self.zond_calibration_btn)
 
         controls_layout.addStretch()
 
@@ -327,7 +335,7 @@ class MainWindow(QMainWindow):
 
         self.camera_feed_widget.setPixmap(scaled_pixmap)
         return
-    
+
     def deduce_last_ridge_position_callback(self) -> None:
         worker = Worker(self.apparatus.deduce_last_ridge_position)
         self.threadpool.start(worker)
@@ -337,24 +345,29 @@ class MainWindow(QMainWindow):
         worker = Worker(self.apparatus.run)
         self.threadpool.start(worker)
         return
-    
+
     def go_to_ridge_callback(self) -> None:
         nth = int(self.ridge_index_edit.text())
         worker = Worker(self.apparatus.go_to_nth_ridge_center, nth)
         self.threadpool.start(worker)
         return
-    
+
     def measure_backlask_callback(self) -> None:
         worker = Worker(self.apparatus.measure_basklash, 1)
         self.threadpool.start(worker)
         return
-    
+
     def manual_first_ridge_callback(self) -> None:
         self.apparatus.save_first_ridge_center()
         return
-    
+
     def manual_last_ridge_callback(self) -> None:
         self.apparatus.save_last_ridge_center()
+        return
+
+    def zond_calibration_callback(self) -> None:
+        worker = Worker(self.apparatus.calibrate_zond)
+        self.threadpool.start(worker)
         return
 
     def closeEvent(self, event):
